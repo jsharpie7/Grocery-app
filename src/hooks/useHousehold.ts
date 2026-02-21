@@ -6,6 +6,18 @@ import { generateJoinCode } from '../lib/storage'
 export function useHousehold() {
   const { householdId, householdName, joinCode, setHousehold, setCategories } = useHouseholdStore()
 
+  const loadCategories = useCallback(async (hid: string) => {
+    const { data } = await supabase
+      .from('categories')
+      .select()
+      .or(`household_id.eq.${hid},is_default.eq.true`)
+      .order('name')
+
+    if (data) {
+      setCategories(data)
+    }
+  }, [setCategories])
+
   const createHousehold = useCallback(async (name = 'My Household') => {
     const code = generateJoinCode()
 
@@ -17,7 +29,7 @@ export function useHousehold() {
 
     if (error) {
       console.error('Error creating household:', error)
-      return null
+      return { success: false as const, error: error.message }
     }
 
     setHousehold(data.id, data.name, data.join_code)
@@ -25,8 +37,8 @@ export function useHousehold() {
     // Load default categories
     await loadCategories(data.id)
 
-    return data
-  }, [setHousehold])
+    return { success: true as const }
+  }, [setHousehold, loadCategories])
 
   const joinHousehold = useCallback(async (code: string) => {
     const { data, error } = await supabase
@@ -43,19 +55,7 @@ export function useHousehold() {
     await loadCategories(data.id)
 
     return { success: true, household: data }
-  }, [setHousehold])
-
-  const loadCategories = useCallback(async (hid: string) => {
-    const { data } = await supabase
-      .from('categories')
-      .select()
-      .or(`household_id.eq.${hid},is_default.eq.true`)
-      .order('name')
-
-    if (data) {
-      setCategories(data)
-    }
-  }, [setCategories])
+  }, [setHousehold, loadCategories])
 
   useEffect(() => {
     if (householdId) {

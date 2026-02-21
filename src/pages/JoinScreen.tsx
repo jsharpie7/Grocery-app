@@ -13,8 +13,11 @@ export default function JoinScreen() {
   async function handleCreate() {
     setLoading(true)
     setError('')
-    await createHousehold(householdName || 'My Household')
+    const result = await createHousehold(householdName || 'My Household')
     setLoading(false)
+    if (!result.success) {
+      setError(result.error || 'Failed to create household. Check your Supabase configuration.')
+    }
   }
 
   async function handleJoin() {
@@ -91,6 +94,7 @@ export default function JoinScreen() {
             >
               {loading ? 'Creating...' : 'Create Household'}
             </motion.button>
+            {error && <p className="text-red-500 text-sm text-center">{error}</p>}
             <button
               onClick={() => setMode('choose')}
               className="w-full py-2 text-gray-500"
