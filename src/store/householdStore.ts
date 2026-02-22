@@ -9,11 +9,13 @@ interface HouseholdState {
   stores: Store[]
   categories: Category[]
   activeStoreId: string | null
+  geminiKey: string
 
   setHousehold: (id: string, name: string, joinCode: string) => void
   setStores: (stores: Store[]) => void
   setCategories: (categories: Category[]) => void
   setActiveStore: (storeId: string | null) => void
+  setGeminiKey: (key: string) => void
   clearHousehold: () => void
 }
 
@@ -26,6 +28,7 @@ export const useHouseholdStore = create<HouseholdState>()(
       stores: [],
       categories: [],
       activeStoreId: null,
+      geminiKey: '',
 
       setHousehold: (id, name, joinCode) =>
         set({ householdId: id, householdName: name, joinCode }),
@@ -35,6 +38,8 @@ export const useHouseholdStore = create<HouseholdState>()(
       setCategories: (categories) => set({ categories }),
 
       setActiveStore: (storeId) => set({ activeStoreId: storeId }),
+
+      setGeminiKey: (key) => set({ geminiKey: key }),
 
       clearHousehold: () =>
         set({
@@ -52,6 +57,7 @@ export const useHouseholdStore = create<HouseholdState>()(
         householdId: state.householdId,
         householdName: state.householdName,
         joinCode: state.joinCode,
+        geminiKey: state.geminiKey,
       }),
     }
   )

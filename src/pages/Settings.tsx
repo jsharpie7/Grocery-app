@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import StoreManager from '../components/settings/StoreManager'
 import ItemManager from '../components/settings/ItemManager'
 import ImportCSV from '../components/settings/ImportCSV'
+import PhotoImport from '../components/settings/PhotoImport'
 import HouseholdCode from '../components/settings/HouseholdCode'
 
 type Tab = 'stores' | 'items' | 'import' | 'household'
@@ -18,6 +19,7 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
 export default function Settings() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<Tab>('stores')
+  const [importMode, setImportMode] = useState<'csv' | 'photos'>('csv')
 
   return (
     <div className="h-screen w-screen flex flex-col bg-gray-50">
@@ -64,7 +66,32 @@ export default function Settings() {
           >
             {activeTab === 'stores' && <StoreManager />}
             {activeTab === 'items' && <ItemManager />}
-            {activeTab === 'import' && <ImportCSV />}
+            {activeTab === 'import' && (
+              <div>
+                {/* CSV / Photos sub-toggle */}
+                <div className="px-4 pt-4 pb-2">
+                  <div className="bg-gray-100 rounded-xl p-1 flex">
+                    <button
+                      onClick={() => setImportMode('csv')}
+                      className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        importMode === 'csv' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
+                      }`}
+                    >
+                      📄 CSV
+                    </button>
+                    <button
+                      onClick={() => setImportMode('photos')}
+                      className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        importMode === 'photos' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
+                      }`}
+                    >
+                      📷 Photos
+                    </button>
+                  </div>
+                </div>
+                {importMode === 'csv' ? <ImportCSV /> : <PhotoImport />}
+              </div>
+            )}
             {activeTab === 'household' && <HouseholdCode />}
           </motion.div>
         </AnimatePresence>
