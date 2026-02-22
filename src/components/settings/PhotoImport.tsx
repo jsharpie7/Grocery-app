@@ -28,23 +28,8 @@ export default function PhotoImport() {
   const cameraRef = useRef<HTMLInputElement>(null)
   const galleryRef = useRef<HTMLInputElement>(null)
 
-  function addPhotos(files: FileList | null) {
-    if (!files) return
-    setPhotos(prev => [...prev, ...Array.from(files)])
-    setResult(null)
-    setRows([])
-    setHasExtracted(false)
-    setError(null)
-  }
-
-  function removePhoto(index: number) {
-    setPhotos(prev => prev.filter((_, i) => i !== index))
-    setRows([])
-    setHasExtracted(false)
-  }
-
-  async function handleExtract() {
-    if (photos.length === 0 || !geminiKey) return
+  async function doExtract(photoList: File[]) {
+    if (photoList.length === 0 || !geminiKey) return
     setExtracting(true)
     setError(null)
     setRows([])
@@ -52,19 +37,12 @@ export default function PhotoImport() {
 
     try {
       const results = await Promise.all(
-        photos.map(f => extractItemsFromImage(f, photoType, geminiKey))
+        photoList.map(f => extractItemsFromImage(f, photoType, geminiKey))
       )
       const merged = results.flat()
 
-      // Fill in fallback store for items with no store detected
-      const withStore = merged.map(item => ({
-        ...item,
-        store_name: item.store_name || fallbackStore,
-      }))
-
-      // Deduplicate by item_name + store_name
       const seen = new Set<string>()
-      const deduped = withStore.filter(item => {
+      const deduped = merged.filter(item => {
         const key = `${item.item_name.toLowerCase()}|${item.store_name.toLowerCase()}`
         if (seen.has(key)) return false
         seen.add(key)
@@ -74,12 +52,36 @@ export default function PhotoImport() {
       setRows(deduped)
       setHasExtracted(true)
     } catch (e) {
-      console.error('Gemini extraction error:', e)
+      console.error('[PhotoImport] Gemini error:', e)
       setError(e instanceof Error ? e.message : 'Extraction failed. Try again.')
       setHasExtracted(true)
     } finally {
       setExtracting(false)
     }
+  }
+
+  async function addPhotos(files: FileList | null) {
+    if (!files || files.length === 0) return
+    const newList = [...photos, ...Array.from(files)]
+    console.log('[PhotoImport] files received:', newList.map(f => `${f.name} (${(f.size / 1024).toFixed(0)} KB)`))
+    setPhotos(newList)
+    setResult(null)
+    setRows([])
+    setHasExtracted(false)
+    setError(null)
+    await doExtract(newList)
+  }
+
+  function removePhoto(index: number) {
+    setPhotos(prev => prev.filter((_, i) => i !== index))
+    setRows([])
+    setHasExtracted(false)
+    setError(null)
+  }
+
+  function applyStoreToAll(storeName: string) {
+    setFallbackStore(storeName)
+    setRows(prev => prev.map(row => ({ ...row, store_name: storeName })))
   }
 
   function updateRow(index: number, field: keyof ExtractedItem, value: string | number | null) {
@@ -127,7 +129,7 @@ export default function PhotoImport() {
           .single()
 
         if (itemError || !item) {
-          console.error('Item upsert error:', itemError, 'row:', row)
+          console.error('[PhotoImport] item upsert error:', itemError, 'row:', row)
           errors++
           continue
         }
@@ -141,12 +143,13 @@ export default function PhotoImport() {
             typical_price: row.typical_price,
           }, { onConflict: 'store_id,item_id' })
         } else {
-          console.warn('No store matched for item:', row.item_name, '— store_name was:', JSON.stringify(row.store_name))
+          console.warn('[PhotoImport] no store for item:', row.item_name, '— store_name was:', JSON.stringify(row.store_name))
           noStore++
         }
 
         imported++
-      } catch {
+      } catch (err) {
+        console.error('[PhotoImport] unexpected error on row:', row, err)
         errors++
       }
     }
@@ -222,43 +225,20 @@ export default function PhotoImport() {
         ))}
       </div>
 
-      <p className="text-xs text-gray-400 px-1">
-        {photoType === 'shelf'
-          ? 'Take a photo of a shelf label to extract the item name, price, and unit.'
-          : 'Take a photo of a receipt to extract all purchased items at once.'}
-      </p>
-
-      {/* Store selector — shelf labels rarely show store name, so pick it here */}
-      {photoType === 'shelf' && stores.length > 0 && (
-        <div className="bg-white rounded-2xl px-4 py-3 shadow-sm">
-          <label className="block text-xs font-medium text-gray-500 mb-1.5">
-            Which store are these labels from?
-          </label>
-          <select
-            value={fallbackStore}
-            onChange={e => setFallbackStore(e.target.value)}
-            className="w-full text-sm text-gray-800 bg-transparent focus:outline-none"
-          >
-            <option value="">— Pick a store (or Gemini will guess) —</option>
-            {stores.map(s => (
-              <option key={s.id} value={s.name}>{s.name}</option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      {/* Upload buttons */}
+      {/* Upload buttons — always visible */}
       <div className="grid grid-cols-2 gap-3">
         <button
           onClick={() => cameraRef.current?.click()}
-          className="py-5 rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 font-medium flex flex-col items-center gap-1.5 active:bg-gray-50"
+          disabled={extracting}
+          className="py-5 rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 font-medium flex flex-col items-center gap-1.5 active:bg-gray-50 disabled:opacity-40"
         >
           <span className="text-3xl">📷</span>
           <span className="text-xs">Take Photo</span>
         </button>
         <button
           onClick={() => galleryRef.current?.click()}
-          className="py-5 rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 font-medium flex flex-col items-center gap-1.5 active:bg-gray-50"
+          disabled={extracting}
+          className="py-5 rounded-2xl border-2 border-dashed border-gray-200 text-gray-400 font-medium flex flex-col items-center gap-1.5 active:bg-gray-50 disabled:opacity-40"
         >
           <span className="text-3xl">🖼️</span>
           <span className="text-xs">Choose from Gallery</span>
@@ -293,33 +273,27 @@ export default function PhotoImport() {
                 alt=""
                 className="w-20 h-20 object-cover rounded-xl"
               />
-              <button
-                onClick={() => removePhoto(i)}
-                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center shadow"
-              >
-                ×
-              </button>
+              {!extracting && (
+                <button
+                  onClick={() => removePhoto(i)}
+                  className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center shadow"
+                >
+                  ×
+                </button>
+              )}
             </div>
           ))}
         </div>
       )}
 
-      {/* Extract button */}
-      {photos.length > 0 && rows.length === 0 && !extracting && (
-        <motion.button
-          whileTap={{ scale: 0.97 }}
-          onClick={handleExtract}
-          className="w-full py-4 bg-indigo-500 text-white rounded-2xl font-semibold shadow-lg"
-        >
-          Extract Items from {photos.length} Photo{photos.length !== 1 ? 's' : ''}
-        </motion.button>
-      )}
-
-      {/* Loading */}
+      {/* Scanning indicator */}
       {extracting && (
-        <div className="text-center py-10 text-gray-400">
-          <div className="text-4xl mb-3 animate-pulse">✨</div>
-          <p className="text-sm">Scanning {photos.length} photo{photos.length !== 1 ? 's' : ''}...</p>
+        <div className="bg-indigo-50 rounded-2xl px-4 py-5 flex items-center gap-3">
+          <div className="text-2xl animate-pulse">✨</div>
+          <div>
+            <p className="text-sm font-medium text-indigo-700">Scanning with Gemini AI…</p>
+            <p className="text-xs text-indigo-400 mt-0.5">This takes about 5–10 seconds</p>
+          </div>
         </div>
       )}
 
@@ -328,9 +302,17 @@ export default function PhotoImport() {
         <motion.div
           initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-red-50 rounded-2xl p-4 text-red-600 text-sm"
+          className="bg-red-50 rounded-2xl p-4 text-red-600 text-sm space-y-2"
         >
-          {error}
+          <p className="font-medium">{error}</p>
+          {photos.length > 0 && (
+            <button
+              onClick={() => doExtract(photos)}
+              className="text-red-500 underline text-xs"
+            >
+              Retry scan
+            </button>
+          )}
         </motion.div>
       )}
 
@@ -339,27 +321,52 @@ export default function PhotoImport() {
         <motion.div
           initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-amber-50 rounded-2xl p-4 text-amber-700 text-sm text-center"
+          className="bg-amber-50 rounded-2xl p-4 text-amber-700 text-sm space-y-2"
         >
           <p className="font-medium">No items detected in this photo.</p>
-          <p className="text-xs mt-1 text-amber-600">Try a clearer, better-lit photo of the shelf label. Open browser DevTools → Console for details.</p>
+          <p className="text-xs text-amber-600">Try a clearer, better-lit photo. Check browser DevTools → Console for details.</p>
+          {photos.length > 0 && (
+            <button
+              onClick={() => doExtract(photos)}
+              className="text-amber-600 underline text-xs"
+            >
+              Retry scan
+            </button>
+          )}
         </motion.div>
       )}
 
       {/* Results table */}
       {rows.length > 0 && (
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-            <span className="font-semibold text-gray-800">{rows.length} items found</span>
-            <button
-              onClick={() => setRows(prev => [...prev, {
-                item_name: '', store_name: '', category: 'Other',
-                typical_price: null, unit: 'ea', typical_quantity: 1,
-              }])}
-              className="text-indigo-500 text-sm font-medium"
-            >
-              + Add row
-            </button>
+          <div className="px-4 py-3 border-b border-gray-100 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-gray-800">{rows.length} items found</span>
+              <button
+                onClick={() => setRows(prev => [...prev, {
+                  item_name: '', store_name: fallbackStore, category: 'Other',
+                  typical_price: null, unit: 'ea', typical_quantity: 1,
+                }])}
+                className="text-indigo-500 text-sm font-medium"
+              >
+                + Add row
+              </button>
+            </div>
+            {stores.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-400 whitespace-nowrap">Link all to:</span>
+                <select
+                  value={fallbackStore}
+                  onChange={e => applyStoreToAll(e.target.value)}
+                  className="flex-1 text-sm text-gray-800 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-400"
+                >
+                  <option value="">— pick a store —</option>
+                  {stores.map(s => (
+                    <option key={s.id} value={s.name}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -448,7 +455,7 @@ export default function PhotoImport() {
       {rows.length > 0 && (
         <div className="space-y-3">
           <button
-            onClick={() => { setRows([]); setPhotos([]); setHasExtracted(false) }}
+            onClick={() => { setRows([]); setPhotos([]); setHasExtracted(false); setFallbackStore('') }}
             className="w-full py-3 border-2 border-gray-200 text-gray-500 rounded-2xl font-medium text-sm"
           >
             Clear & Scan More Photos
@@ -459,7 +466,7 @@ export default function PhotoImport() {
             disabled={importing}
             className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-semibold shadow-lg disabled:opacity-60"
           >
-            {importing ? 'Importing...' : `Import ${rows.length} Items`}
+            {importing ? 'Importing…' : `Import ${rows.length} Items`}
           </motion.button>
         </div>
       )}
@@ -476,13 +483,13 @@ export default function PhotoImport() {
           </p>
           {result.noStore > 0 && (
             <p className="text-amber-600 text-sm">
-              ⚠ {result.noStore} item{result.noStore !== 1 ? 's' : ''} saved without a store — pick a store above next time so they appear in AddToList.
+              ⚠ {result.noStore} item{result.noStore !== 1 ? 's' : ''} saved without a store — use "Link all to:" next time so they appear in AddToList.
             </p>
           )}
           {result.errors > 0 && (
             <p className="text-red-500 text-sm">{result.errors} rows had errors (check DevTools Console)</p>
           )}
-          {result.noStore === 0 && (
+          {result.noStore === 0 && result.errors === 0 && (
             <p className="text-emerald-600 text-sm">
               They'll appear in AddToList under the correct store.
             </p>
