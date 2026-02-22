@@ -18,10 +18,12 @@ export default function PhotoImport() {
   const [photos, setPhotos] = useState<File[]>([])
   const [extracting, setExtracting] = useState(false)
   const [rows, setRows] = useState<ExtractedItem[]>([])
+  const [hasExtracted, setHasExtracted] = useState(false)
   const [importing, setImporting] = useState(false)
-  const [result, setResult] = useState<{ imported: number; errors: number } | null>(null)
+  const [result, setResult] = useState<{ imported: number; errors: number; noStore: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [apiKeyInput, setApiKeyInput] = useState('')
+  const [fallbackStore, setFallbackStore] = useState<string>('')
 
   const cameraRef = useRef<HTMLInputElement>(null)
   const galleryRef = useRef<HTMLInputElement>(null)
@@ -31,12 +33,14 @@ export default function PhotoImport() {
     setPhotos(prev => [...prev, ...Array.from(files)])
     setResult(null)
     setRows([])
+    setHasExtracted(false)
     setError(null)
   }
 
   function removePhoto(index: number) {
     setPhotos(prev => prev.filter((_, i) => i !== index))
     setRows([])
+    setHasExtracted(false)
   }
 
   async function handleExtract() {
@@ -44,6 +48,7 @@ export default function PhotoImport() {
     setExtracting(true)
     setError(null)
     setRows([])
+    setHasExtracted(false)
 
     try {
       const results = await Promise.all(
@@ -51,9 +56,15 @@ export default function PhotoImport() {
       )
       const merged = results.flat()
 
+      // Fill in fallback store for items with no store detected
+      const withStore = merged.map(item => ({
+        ...item,
+        store_name: item.store_name || fallbackStore,
+      }))
+
       // Deduplicate by item_name + store_name
       const seen = new Set<string>()
-      const deduped = merged.filter(item => {
+      const deduped = withStore.filter(item => {
         const key = `${item.item_name.toLowerCase()}|${item.store_name.toLowerCase()}`
         if (seen.has(key)) return false
         seen.add(key)
@@ -61,8 +72,11 @@ export default function PhotoImport() {
       })
 
       setRows(deduped)
+      setHasExtracted(true)
     } catch (e) {
+      console.error('Gemini extraction error:', e)
       setError(e instanceof Error ? e.message : 'Extraction failed. Try again.')
+      setHasExtracted(true)
     } finally {
       setExtracting(false)
     }
@@ -83,6 +97,7 @@ export default function PhotoImport() {
 
     let imported = 0
     let errors = 0
+    let noStore = 0
 
     const storeMap: Record<string, string> = {}
     for (const s of stores) storeMap[s.name.toLowerCase()] = s.id
@@ -111,7 +126,11 @@ export default function PhotoImport() {
           .select()
           .single()
 
-        if (itemError || !item) { errors++; continue }
+        if (itemError || !item) {
+          console.error('Item upsert error:', itemError, 'row:', row)
+          errors++
+          continue
+        }
 
         if (storeId) {
           await supabase.from('store_items').upsert({
@@ -121,6 +140,9 @@ export default function PhotoImport() {
             typical_quantity: row.typical_quantity || 1,
             typical_price: row.typical_price,
           }, { onConflict: 'store_id,item_id' })
+        } else {
+          console.warn('No store matched for item:', row.item_name, '— store_name was:', JSON.stringify(row.store_name))
+          noStore++
         }
 
         imported++
@@ -130,7 +152,7 @@ export default function PhotoImport() {
     }
 
     setImporting(false)
-    setResult({ imported, errors })
+    setResult({ imported, errors, noStore })
     setRows([])
     setPhotos([])
   }
@@ -205,6 +227,25 @@ export default function PhotoImport() {
           ? 'Take a photo of a shelf label to extract the item name, price, and unit.'
           : 'Take a photo of a receipt to extract all purchased items at once.'}
       </p>
+
+      {/* Store selector — shelf labels rarely show store name, so pick it here */}
+      {photoType === 'shelf' && stores.length > 0 && (
+        <div className="bg-white rounded-2xl px-4 py-3 shadow-sm">
+          <label className="block text-xs font-medium text-gray-500 mb-1.5">
+            Which store are these labels from?
+          </label>
+          <select
+            value={fallbackStore}
+            onChange={e => setFallbackStore(e.target.value)}
+            className="w-full text-sm text-gray-800 bg-transparent focus:outline-none"
+          >
+            <option value="">— Pick a store (or Gemini will guess) —</option>
+            {stores.map(s => (
+              <option key={s.id} value={s.name}>{s.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* Upload buttons */}
       <div className="grid grid-cols-2 gap-3">
@@ -290,6 +331,18 @@ export default function PhotoImport() {
           className="bg-red-50 rounded-2xl p-4 text-red-600 text-sm"
         >
           {error}
+        </motion.div>
+      )}
+
+      {/* No items found */}
+      {hasExtracted && !extracting && !error && rows.length === 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-amber-50 rounded-2xl p-4 text-amber-700 text-sm text-center"
+        >
+          <p className="font-medium">No items detected in this photo.</p>
+          <p className="text-xs mt-1 text-amber-600">Try a clearer, better-lit photo of the shelf label. Open browser DevTools → Console for details.</p>
         </motion.div>
       )}
 
@@ -395,7 +448,7 @@ export default function PhotoImport() {
       {rows.length > 0 && (
         <div className="space-y-3">
           <button
-            onClick={() => { setRows([]); setPhotos([]) }}
+            onClick={() => { setRows([]); setPhotos([]); setHasExtracted(false) }}
             className="w-full py-3 border-2 border-gray-200 text-gray-500 rounded-2xl font-medium text-sm"
           >
             Clear & Scan More Photos
@@ -416,17 +469,24 @@ export default function PhotoImport() {
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-emerald-50 rounded-2xl p-4 text-center"
+          className="bg-emerald-50 rounded-2xl p-4 text-center space-y-1"
         >
           <p className="text-emerald-700 font-semibold text-lg">
-            ✓ {result.imported} items imported
+            ✓ {result.imported} item{result.imported !== 1 ? 's' : ''} imported
           </p>
-          {result.errors > 0 && (
-            <p className="text-red-500 text-sm mt-1">{result.errors} rows had errors</p>
+          {result.noStore > 0 && (
+            <p className="text-amber-600 text-sm">
+              ⚠ {result.noStore} item{result.noStore !== 1 ? 's' : ''} saved without a store — pick a store above next time so they appear in AddToList.
+            </p>
           )}
-          <p className="text-emerald-600 text-sm mt-1">
-            They'll appear in AddToList under the correct store.
-          </p>
+          {result.errors > 0 && (
+            <p className="text-red-500 text-sm">{result.errors} rows had errors (check DevTools Console)</p>
+          )}
+          {result.noStore === 0 && (
+            <p className="text-emerald-600 text-sm">
+              They'll appear in AddToList under the correct store.
+            </p>
+          )}
         </motion.div>
       )}
     </div>
