@@ -2,6 +2,17 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { useHousehold } from '../hooks/useHousehold'
 
+function friendlyError(msg: string): string {
+  const m = msg.toLowerCase()
+  if (m.includes('relation') || m.includes('does not exist') || m.includes('table'))
+    return 'Database not set up. Run the SQL migration in your Supabase project: open SQL Editor and paste the contents of supabase/migrations/001_initial_schema.sql.'
+  if (m.includes('fetch') || m.includes('network') || m.includes('failed to fetch') || m.includes('placeholder'))
+    return 'Cannot reach Supabase. Make sure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set in your Vercel environment variables, then redeploy.'
+  if (m.includes('jwt') || m.includes('apikey') || m.includes('invalid api key') || m.includes('anon'))
+    return 'Invalid Supabase API key. Double-check VITE_SUPABASE_ANON_KEY in Vercel — copy it from Supabase project → Settings → API.'
+  return msg
+}
+
 export default function JoinScreen() {
   const { createHousehold, joinHousehold } = useHousehold()
   const [mode, setMode] = useState<'choose' | 'create' | 'join'>('choose')
@@ -16,7 +27,7 @@ export default function JoinScreen() {
     const result = await createHousehold(householdName || 'My Household')
     setLoading(false)
     if (!result.success) {
-      setError(result.error || 'Failed to create household. Check your Supabase configuration.')
+      setError(friendlyError(result.error || 'Failed to create household.'))
     }
   }
 
@@ -30,7 +41,7 @@ export default function JoinScreen() {
     const result = await joinHousehold(joinCode)
     setLoading(false)
     if (!result.success) {
-      setError(result.error || 'Invalid code')
+      setError(friendlyError(result.error || 'Invalid code'))
     }
   }
 
