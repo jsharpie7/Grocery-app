@@ -55,7 +55,7 @@ export async function extractItemsFromImage(
   const prompt = type === 'shelf' ? SHELF_PROMPT : RECEIPT_PROMPT
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -69,6 +69,7 @@ export async function extractItemsFromImage(
         generationConfig: {
           responseMimeType: 'application/json',
           temperature: 0.1,
+          thinkingConfig: { thinkingBudget: 0 },
         },
       }),
     },
