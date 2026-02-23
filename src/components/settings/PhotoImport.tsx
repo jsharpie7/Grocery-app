@@ -21,6 +21,7 @@ export default function PhotoImport() {
   const [hasExtracted, setHasExtracted] = useState(false)
   const [importing, setImporting] = useState(false)
   const [result, setResult] = useState<{ imported: number; errors: number; noStore: number } | null>(null)
+  const [importErrorDetail, setImportErrorDetail] = useState<string>('')
   const [error, setError] = useState<string | null>(null)
   const [apiKeyInput, setApiKeyInput] = useState('')
   const [fallbackStore, setFallbackStore] = useState<string>('')
@@ -96,10 +97,12 @@ export default function PhotoImport() {
     if (!householdId || rows.length === 0) return
     setImporting(true)
     setResult(null)
+    setImportErrorDetail('')
 
     let imported = 0
     let errors = 0
     let noStore = 0
+    let firstError = ''
 
     const storeMap: Record<string, string> = {}
     for (const s of stores) storeMap[s.name.toLowerCase()] = s.id
@@ -127,6 +130,7 @@ export default function PhotoImport() {
           .maybeSingle()
 
         if (fetchErr) {
+          firstError = firstError || `Fetch: ${fetchErr.message}`
           console.error('[PhotoImport] item fetch error:', fetchErr, 'row:', row)
           errors++
           continue
@@ -139,6 +143,7 @@ export default function PhotoImport() {
             .select()
             .single()
           if (insertErr || !newItem) {
+            firstError = firstError || `Insert: ${insertErr?.message ?? 'no data returned'}`
             console.error('[PhotoImport] item insert error:', insertErr, 'row:', row)
             errors++
             continue
@@ -161,12 +166,14 @@ export default function PhotoImport() {
 
         imported++
       } catch (err) {
+        firstError = firstError || String(err)
         console.error('[PhotoImport] unexpected error on row:', row, err)
         errors++
       }
     }
 
     setImporting(false)
+    setImportErrorDetail(firstError)
     setResult({ imported, errors, noStore })
     setRows([])
     setPhotos([])
@@ -218,6 +225,7 @@ export default function PhotoImport() {
       {/* API key indicator */}
       <div className="flex items-center justify-between text-xs text-gray-400 px-1">
         <span>Gemini key: ····{geminiKey.slice(-4)}</span>
+        <span className="text-gray-200 select-none">v8</span>
         <button onClick={() => setGeminiKey('')} className="text-red-400 font-medium">
           Remove key
         </button>
@@ -500,7 +508,14 @@ export default function PhotoImport() {
             </p>
           )}
           {result.errors > 0 && (
-            <p className="text-red-500 text-sm">{result.errors} rows had errors (check DevTools Console)</p>
+            <div>
+              <p className="text-red-500 text-sm">{result.errors} rows had errors</p>
+              {importErrorDetail && (
+                <p className="text-red-400 text-xs font-mono bg-red-50 rounded-lg p-2 mt-1 text-left break-all">
+                  {importErrorDetail}
+                </p>
+              )}
+            </div>
           )}
           {result.noStore === 0 && result.errors === 0 && (
             <p className="text-emerald-600 text-sm">
