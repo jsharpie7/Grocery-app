@@ -78,18 +78,25 @@ export default function ImportCSV() {
         // Find category
         const catId = categoryMap[row.category.toLowerCase()] || null
 
-        // Upsert item
-        const { data: item, error: itemError } = await supabase
+        // Find or create item
+        let { data: item, error: fetchErr } = await supabase
           .from('items')
-          .upsert({
-            household_id: householdId,
-            name: row.item_name,
-            category_id: catId,
-          }, { onConflict: 'household_id,name' } as any)
           .select()
-          .single()
+          .eq('household_id', householdId)
+          .eq('name', row.item_name)
+          .maybeSingle()
 
-        if (itemError || !item) { errors++; continue }
+        if (fetchErr) { errors++; continue }
+
+        if (!item) {
+          const { data: newItem, error: insertErr } = await supabase
+            .from('items')
+            .insert({ household_id: householdId, name: row.item_name, category_id: catId })
+            .select()
+            .single()
+          if (insertErr || !newItem) { errors++; continue }
+          item = newItem
+        }
 
         // Upsert store_item
         if (storeId) {

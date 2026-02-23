@@ -118,20 +118,32 @@ export default function PhotoImport() {
 
         const catId = categoryMap[row.category.toLowerCase()] || null
 
-        const { data: item, error: itemError } = await supabase
+        // Find or create item (select-then-insert avoids needing a unique constraint)
+        let { data: item, error: fetchErr } = await supabase
           .from('items')
-          .upsert({
-            household_id: householdId,
-            name: row.item_name,
-            category_id: catId,
-          }, { onConflict: 'household_id,name' } as any)
           .select()
-          .single()
+          .eq('household_id', householdId)
+          .eq('name', row.item_name)
+          .maybeSingle()
 
-        if (itemError || !item) {
-          console.error('[PhotoImport] item upsert error:', itemError, 'row:', row)
+        if (fetchErr) {
+          console.error('[PhotoImport] item fetch error:', fetchErr, 'row:', row)
           errors++
           continue
+        }
+
+        if (!item) {
+          const { data: newItem, error: insertErr } = await supabase
+            .from('items')
+            .insert({ household_id: householdId, name: row.item_name, category_id: catId })
+            .select()
+            .single()
+          if (insertErr || !newItem) {
+            console.error('[PhotoImport] item insert error:', insertErr, 'row:', row)
+            errors++
+            continue
+          }
+          item = newItem
         }
 
         if (storeId) {
@@ -158,6 +170,7 @@ export default function PhotoImport() {
     setResult({ imported, errors, noStore })
     setRows([])
     setPhotos([])
+    setHasExtracted(false)
   }
 
   // API key setup screen
