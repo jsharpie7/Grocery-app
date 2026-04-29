@@ -1,7 +1,7 @@
 {
-  "name": "Grocery App",
-  "short_name": "Grocery",
-  "description": "Smart household grocery list manager",
+  "name": "Grocery Spend",
+  "short_name": "Spend",
+  "description": "Track your household grocery spending",
   "theme_color": "#ffffff",
   "background_color": "#f9fafb",
   "display": "standalone",

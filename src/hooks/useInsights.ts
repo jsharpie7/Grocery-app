@@ -1,172 +1,134 @@
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useHouseholdStore } from '../store/householdStore'
+import type { MonthlySpend, StoreMonthlySpend, Item, ItemPrice } from '../lib/supabase'
 
-export type MonthlySpend = {
-  month: string
-  total: number
+export interface TopItem {
+  item: Item
+  avgPrice: number
+  count: number
+  prices: ItemPrice[]
 }
 
-export type ItemSpend = {
-  item_id: string
-  item_name: string
-  total: number
-}
-
-export type CategorySpend = {
+export interface CategoryBreakdown {
   category: string
-  icon: string
   total: number
-}
-
-export type StoreSpend = {
-  store_id: string
-  store_name: string
-  monthly: MonthlySpend[]
-}
-
-export type TripTime = {
-  store_id: string
-  store_name: string
-  total_minutes: number
-  trip_count: number
-  avg_minutes: number
-}
-
-export type InsightsData = {
-  monthlySpend: MonthlySpend[]
-  topItems: ItemSpend[]
-  categorySpend: CategorySpend[]
-  storeSpend: StoreSpend[]
-  tripTimes: TripTime[]
 }
 
 export function useInsights() {
-  const { householdId } = useHouseholdStore()
-  const [data, setData] = useState<InsightsData | null>(null)
+  const [monthlyData, setMonthlyData] = useState<MonthlySpend[]>([])
+  const [storeMonthlyData, setStoreMonthlyData] = useState<StoreMonthlySpend[]>([])
+  const [topItems, setTopItems] = useState<TopItem[]>([])
+  const [categoryData, setCategoryData] = useState<CategoryBreakdown[]>([])
+  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const householdId = useHouseholdStore((s) => s.householdId)
 
-  const fetchInsights = useCallback(async () => {
-    if (!householdId) return
-
+  async function fetchMonthlySpend(months = 12) {
     setLoading(true)
-
-    // Fetch completed trips in last 12 months
-    const twelveMonthsAgo = new Date()
-    twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12)
-
-    const { data: trips } = await supabase
-      .from('trips')
-      .select(`
-        *,
-        store:stores(name),
-        trip_items(
-          *,
-          item:items(
-            name,
-            category:categories(name, icon)
-          )
-        )
-      `)
-      .eq('household_id', householdId)
-      .not('ended_at', 'is', null)
-      .gte('started_at', twelveMonthsAgo.toISOString())
-      .order('started_at', { ascending: true })
-
-    if (!trips) {
+    setError(null)
+    try {
+      const { data, error: err } = await supabase.rpc('get_monthly_spend', { p_months: months })
+      if (err) { setError(err.message); return }
+      setMonthlyData((data as MonthlySpend[]) ?? [])
+    } finally {
       setLoading(false)
-      return
     }
+  }
 
-    // Process monthly spend
-    const monthlyMap: Record<string, number> = {}
-    const itemSpendMap: Record<string, { name: string; total: number }> = {}
-    const categoryMap: Record<string, { icon: string; total: number }> = {}
-    const storeMonthlyMap: Record<string, Record<string, number>> = {}
-    const storeNameMap: Record<string, string> = {}
-    const tripTimeMap: Record<string, { name: string; totalMs: number; count: number }> = {}
+  async function fetchStoreMonthlySpend(months = 12) {
+    setError(null)
+    const { data, error: err } = await supabase.rpc('get_store_monthly_spend', { p_months: months })
+    if (err) { setError(err.message); return }
+    setStoreMonthlyData((data as StoreMonthlySpend[]) ?? [])
+  }
 
-    for (const trip of trips) {
-      const monthKey = new Date(trip.started_at).toISOString().slice(0, 7) // YYYY-MM
-      const storeId = trip.store_id
-      const storeName = (trip.store as { name: string })?.name || 'Unknown'
+  async function fetchTopItems(limit = 10) {
+    if (!householdId) return
+    setError(null)
+    try {
+      const { data: items, error: itemsErr } = await supabase
+        .from('items')
+        .select()
+        .eq('household_id', householdId)
+        .limit(100)
+      if (itemsErr) { setError(itemsErr.message); return }
 
-      storeNameMap[storeId] = storeName
+      if (!items?.length) { setTopItems([]); return }
 
-      // Monthly spend
-      if (trip.total_spent) {
-        monthlyMap[monthKey] = (monthlyMap[monthKey] || 0) + trip.total_spent
+      const { data: prices, error: pricesErr } = await supabase
+        .from('item_prices')
+        .select()
+        .in('item_id', items.map((i) => i.id))
+        .order('purchased_at', { ascending: false })
+      if (pricesErr) { setError(pricesErr.message); return }
+
+      const pricesByItem = new Map<string, ItemPrice[]>()
+      for (const p of prices ?? []) {
+        const existing = pricesByItem.get(p.item_id) ?? []
+        existing.push(p)
+        pricesByItem.set(p.item_id, existing)
       }
 
-      // Store monthly
-      if (!storeMonthlyMap[storeId]) storeMonthlyMap[storeId] = {}
-      if (trip.total_spent) {
-        storeMonthlyMap[storeId][monthKey] = (storeMonthlyMap[storeId][monthKey] || 0) + trip.total_spent
-      }
+      const result: TopItem[] = items
+        .map((item) => {
+          const itemPrices = pricesByItem.get(item.id) ?? []
+          if (!itemPrices.length) return null
+          const avg = itemPrices.reduce((s, p) => s + Number(p.unit_price), 0) / itemPrices.length
+          return { item, avgPrice: avg, count: itemPrices.length, prices: itemPrices }
+        })
+        .filter((x): x is TopItem => x !== null)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, limit)
 
-      // Trip times
-      if (trip.ended_at) {
-        const duration = new Date(trip.ended_at).getTime() - new Date(trip.started_at).getTime()
-        if (!tripTimeMap[storeId]) {
-          tripTimeMap[storeId] = { name: storeName, totalMs: 0, count: 0 }
-        }
-        tripTimeMap[storeId].totalMs += duration
-        tripTimeMap[storeId].count += 1
-      }
-
-      // Item and category spend
-      for (const ti of (trip.trip_items || [])) {
-        if (!ti.price_paid) continue
-
-        const itemName = (ti.item as { name: string })?.name || 'Unknown'
-        const cat = (ti.item as { category: { name: string; icon: string } | null })?.category
-        const catName = cat?.name || 'Other'
-        const catIcon = cat?.icon || '🛒'
-
-        itemSpendMap[ti.item_id] = {
-          name: itemName,
-          total: (itemSpendMap[ti.item_id]?.total || 0) + ti.price_paid,
-        }
-
-        categoryMap[catName] = {
-          icon: catIcon,
-          total: (categoryMap[catName]?.total || 0) + ti.price_paid,
-        }
-      }
+      setTopItems(result)
+    } catch (e) {
+      setError((e as Error).message)
     }
+  }
 
-    const monthlySpend: MonthlySpend[] = Object.entries(monthlyMap)
-      .map(([month, total]) => ({ month, total }))
-      .sort((a, b) => a.month.localeCompare(b.month))
+  async function fetchCategoryBreakdown(months = 12) {
+    if (!householdId) return
+    setError(null)
+    try {
+      const cutoff = new Date()
+      cutoff.setMonth(cutoff.getMonth() - months)
 
-    const topItems: ItemSpend[] = Object.entries(itemSpendMap)
-      .map(([item_id, { name, total }]) => ({ item_id, item_name: name, total }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 5)
+      const { data: receipts, error: rErr } = await supabase
+        .from('receipts')
+        .select('id')
+        .eq('household_id', householdId)
+        .gte('receipt_date', cutoff.toISOString().split('T')[0])
 
-    const categorySpend: CategorySpend[] = Object.entries(categoryMap)
-      .map(([category, { icon, total }]) => ({ category, icon, total }))
-      .sort((a, b) => b.total - a.total)
+      if (rErr) { setError(rErr.message); return }
+      if (!receipts?.length) { setCategoryData([]); return }
 
-    const storeSpend: StoreSpend[] = Object.entries(storeMonthlyMap).map(([store_id, monthly]) => ({
-      store_id,
-      store_name: storeNameMap[store_id] || 'Unknown',
-      monthly: Object.entries(monthly)
-        .map(([month, total]) => ({ month, total }))
-        .sort((a, b) => a.month.localeCompare(b.month)),
-    }))
+      const { data: items, error: iErr } = await supabase
+        .from('receipt_items')
+        .select('category, total_price')
+        .in('receipt_id', receipts.map((r) => r.id))
 
-    const tripTimes: TripTime[] = Object.entries(tripTimeMap).map(([store_id, { name, totalMs, count }]) => ({
-      store_id,
-      store_name: name,
-      total_minutes: Math.round(totalMs / 60000),
-      trip_count: count,
-      avg_minutes: Math.round(totalMs / 60000 / count),
-    }))
+      if (iErr) { setError(iErr.message); return }
 
-    setData({ monthlySpend, topItems, categorySpend, storeSpend, tripTimes })
-    setLoading(false)
-  }, [householdId])
+      const totals = new Map<string, number>()
+      for (const item of items ?? []) {
+        const prev = totals.get(item.category) ?? 0
+        totals.set(item.category, prev + Number(item.total_price ?? 0))
+      }
 
-  return { data, loading, fetchInsights }
+      setCategoryData(
+        Array.from(totals.entries())
+          .map(([category, total]) => ({ category, total }))
+          .sort((a, b) => b.total - a.total)
+      )
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
+  return {
+    monthlyData, storeMonthlyData, topItems, categoryData,
+    error, loading,
+    fetchMonthlySpend, fetchStoreMonthlySpend, fetchTopItems, fetchCategoryBreakdown,
+  }
 }

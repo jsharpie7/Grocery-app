@@ -9,107 +9,91 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 export const supabase = createClient(
   supabaseUrl || 'https://placeholder.supabase.co',
-  supabaseAnonKey || 'placeholder',
-  {
-    realtime: {
-      params: {
-        eventsPerSecond: 10,
-      },
-    },
-  }
+  supabaseAnonKey || 'placeholder'
 )
 
-// Database types
 export type Household = {
   id: string
   name: string
-  join_code: string
+  invite_code: string
   created_at: string
+}
+
+export type HouseholdMember = {
+  id: string
+  household_id: string
+  user_id: string
+  role: string
+  email: string
+  joined_at: string
 }
 
 export type Store = {
   id: string
   household_id: string
   name: string
-  logo_url: string | null
   color: string
-  display_order: number
-  is_active: boolean
   created_at: string
 }
 
-export type Category = {
+export type Receipt = {
   id: string
-  household_id: string | null
-  name: string
-  icon: string
-  is_default: boolean
+  household_id: string
+  store_id: string | null
+  scanned_at: string
+  receipt_date: string
+  total_amount: number
+  tax_amount: number
+  image_url: string | null
+  notes: string | null
+  // joined
+  store?: Store
+}
+
+export type ReceiptItem = {
+  id: string
+  receipt_id: string
+  item_name: string
+  quantity: number
+  unit: string
+  unit_price: number | null
+  total_price: number | null
+  category: string
+  matched_item_id: string | null
 }
 
 export type Item = {
   id: string
   household_id: string
   name: string
-  category_id: string | null
-  photo_url: string | null
-  barcode: string | null
+  category: string
   created_at: string
-  // Joined fields
-  category?: Category
 }
 
-export type StoreItem = {
+export type ItemPrice = {
   id: string
-  store_id: string
   item_id: string
-  typical_price: number | null
-  typical_quantity: number
-  unit: string
-  purchase_count: number
-  last_purchased_at: string | null
-  // Joined fields
-  item?: Item
+  store_id: string | null
+  unit_price: number
+  purchased_at: string
+  receipt_id: string | null
 }
 
-export type ListItem = {
-  id: string
-  household_id: string
+export type MonthlySpend = {
+  month: string
+  total: number
+}
+
+export type StoreMonthlySpend = {
   store_id: string
-  item_id: string
-  quantity: number
-  unit: string
-  is_checked: boolean
-  added_at: string
-  added_by: string | null
-  // Joined fields
-  item?: Item
+  store_name: string
+  month: string
+  total: number
 }
 
-export type Trip = {
-  id: string
-  household_id: string
-  store_id: string
-  started_at: string
-  ended_at: string | null
-  total_spent: number | null
-  receipt_photo_url: string | null
-}
+export const CATEGORIES = [
+  'Produce', 'Meat', 'Dairy', 'Bakery', 'Frozen', 'Pantry',
+  'Beverages', 'Snacks', 'Household', 'Personal Care', 'Baby', 'Pet', 'Other',
+] as const
 
-export type TripItem = {
-  id: string
-  trip_id: string
-  item_id: string
-  quantity: number
-  unit: string
-  price_paid: number | null
-  // Joined fields
-  item?: Item
-}
-
-export type ShoppingOrder = {
-  id: string
-  store_id: string
-  item_id: string
-  average_position: number
-  sample_count: number
-}
+export type Category = typeof CATEGORIES[number]

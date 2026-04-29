@@ -10,9 +10,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
       manifest: {
-        name: 'Grocery App',
-        short_name: 'Grocery',
-        description: 'Household grocery list manager',
+        name: 'Grocery Spend',
+        short_name: 'Spend',
+        description: 'Track your household grocery spending',
         theme_color: '#ffffff',
         background_color: '#ffffff',
         display: 'standalone',

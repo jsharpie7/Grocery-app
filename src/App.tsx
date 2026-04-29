@@ -1,42 +1,77 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { useHousehold } from './hooks/useHousehold'
-import { useStores } from './hooks/useStores'
+import AuthProvider from './providers/AuthProvider'
+import { useAuthStore } from './store/authStore'
+import { useHouseholdStore } from './store/householdStore'
+import BottomNav from './components/layout/BottomNav'
+import OfflineBanner from './components/ui/OfflineBanner'
+import Spinner from './components/ui/Spinner'
 
-import JoinScreen from './pages/JoinScreen'
-import Home from './pages/Home'
-import AddToList from './pages/AddToList'
-import Shop from './pages/Shop'
-import Insights from './pages/Insights'
-import Settings from './pages/Settings'
+import LoginPage from './pages/LoginPage'
+import SetupPage from './pages/SetupPage'
+import DashboardPage from './pages/DashboardPage'
+import ReceiptsPage from './pages/ReceiptsPage'
+import NewReceiptPage from './pages/NewReceiptPage'
+import ReceiptDetailPage from './pages/ReceiptDetailPage'
+import InsightsPage from './pages/InsightsPage'
+import SettingsPage from './pages/SettingsPage'
 
 function AppRoutes() {
-  const { isSetup } = useHousehold()
+  const { user, loading } = useAuthStore()
+  const householdId = useHouseholdStore((s) => s.householdId)
 
-  // Load stores once household is set up
-  useStores()
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gray-50">
+        <Spinner size="lg" />
+      </div>
+    )
+  }
 
-  if (!isSetup) {
-    return <JoinScreen />
+  if (!user) {
+    return (
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    )
+  }
+
+  if (!householdId) {
+    return (
+      <Routes>
+        <Route path="/setup" element={<SetupPage />} />
+        <Route path="*" element={<Navigate to="/setup" replace />} />
+      </Routes>
+    )
   }
 
   return (
-    <Routes>
-      <Route path="/" element={<Home />} />
-      <Route path="/add" element={<AddToList />} />
-      <Route path="/shop" element={<Shop />} />
-      <Route path="/insights" element={<Insights />} />
-      <Route path="/settings" element={<Settings />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <>
+      <Routes>
+        <Route path="/" element={<DashboardPage />} />
+        <Route path="/receipts" element={<ReceiptsPage />} />
+        <Route path="/receipts/new" element={<NewReceiptPage />} />
+        <Route path="/receipts/:id" element={<ReceiptDetailPage />} />
+        <Route path="/insights" element={<InsightsPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      <BottomNav />
+    </>
   )
 }
 
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="h-screen w-screen overflow-hidden bg-gray-50">
-        <AppRoutes />
-      </div>
+      <AuthProvider>
+        <div className="h-screen w-screen overflow-hidden bg-gray-50 flex flex-col">
+          <OfflineBanner />
+          <div className="flex-1 overflow-hidden">
+            <AppRoutes />
+          </div>
+        </div>
+      </AuthProvider>
     </BrowserRouter>
   )
 }
