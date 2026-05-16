@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, supabaseConfigured } from '../lib/supabase'
 import ErrorBanner from '../components/ui/ErrorBanner'
 import Spinner from '../components/ui/Spinner'
 
@@ -20,11 +20,17 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
+      if (!supabaseConfigured) {
+        setError('App is not connected to a database. Check Vercel environment variables (VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY).')
+        return
+      }
       if (tab === 'signup') {
         const { error: err } = await supabase.auth.signUp({ email, password })
         if (err) {
           if (err.message.toLowerCase().includes('already registered') || err.message.toLowerCase().includes('already exists')) {
-            setError('An account with this email already exists.')
+            setError('An account with this email already exists. Sign in instead.')
+          } else if (err.message === 'Load failed' || err.message === 'Failed to fetch') {
+            setError('Could not reach the server. Check your internet connection, or the Supabase URL may be misconfigured in Vercel.')
           } else {
             setError(err.message)
           }
@@ -33,7 +39,14 @@ export default function LoginPage() {
         setSuccess('Check your email to confirm your account.')
       } else {
         const { error: err } = await supabase.auth.signInWithPassword({ email, password })
-        if (err) { setError(err.message); return }
+        if (err) {
+          if (err.message === 'Load failed' || err.message === 'Failed to fetch') {
+            setError('Could not reach the server. Check your internet connection, or the Supabase URL may be misconfigured in Vercel.')
+          } else {
+            setError(err.message)
+          }
+          return
+        }
       }
     } finally {
       setLoading(false)

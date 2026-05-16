@@ -8,6 +8,8 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.warn('Supabase credentials not configured.')
 }
 
+export const supabaseConfigured = !!(supabaseUrl && supabaseAnonKey)
+
 export const supabase = createClient(
   supabaseUrl || 'https://placeholder.supabase.co',
   supabaseAnonKey || 'placeholder'
