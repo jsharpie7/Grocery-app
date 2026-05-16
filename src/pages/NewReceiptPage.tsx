@@ -106,7 +106,7 @@ function reducer(state: State, action: Action): State {
     case 'REMOVE_ITEM':
       return { ...state, items: state.items.filter((_, i) => i !== action.index) }
     case 'ADD_ITEM':
-      return { ...state, items: [...state.items, { item_name: '', quantity: 1, unit: 'ea', unit_price: null, total_price: null, category: 'Other' }] }
+      return { ...state, items: [...state.items, { item_number: null, item_name: '', quantity: 1, unit: 'ea', unit_price: null, total_price: null, category: 'Other' }] }
     case 'SAVE_START':
       return { ...state, step: 'saving', saveError: null, isDuplicate: false }
     case 'SAVE_ERROR':
@@ -171,6 +171,7 @@ export default function NewReceiptPage() {
         totalAmount: data.total_amount != null ? String(data.total_amount) : '',
         taxAmount: data.tax_amount != null ? String(data.tax_amount) : '',
         items: data.items.map((i) => ({
+          item_number: i.item_number ?? null,
           item_name: i.item_name,
           quantity: i.quantity,
           unit: i.unit,

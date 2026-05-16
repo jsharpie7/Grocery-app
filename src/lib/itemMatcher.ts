@@ -15,12 +15,20 @@ export function normalizeStoreName(name: string): string {
 export function matchItem(
   candidateName: string,
   items: Item[],
+  itemNumber?: string | null,
 ): Item | null {
   if (!items.length) return null
+
+  // Barcode/item-number match is the most reliable — try first
+  if (itemNumber) {
+    const byNumber = items.find(item => item.item_number === itemNumber)
+    if (byNumber) return byNumber
+  }
+
+  // Fall back to name matching
   const normalized = normalizeForMatch(candidateName)
   if (!normalized) return null
 
-  // Exact match first
   const exact = items.find(item => normalizeForMatch(item.name) === normalized)
   if (exact) return exact
 

@@ -7,6 +7,7 @@ export interface ExtractedReceiptData {
 }
 
 export interface ExtractedLineItem {
+  item_number: string | null
   item_name: string
   quantity: number
   unit: string
@@ -34,24 +35,87 @@ function fileToBase64(file: File): Promise<{ base64: string; mimeType: string }>
   })
 }
 
-const RECEIPT_PROMPT = `Analyze this grocery receipt image. Extract all information.
+const RECEIPT_PROMPT = `Analyze this grocery receipt image. Extract all purchased line items carefully.
 Return ONLY a JSON object (no markdown, no explanation) with exactly these fields:
 {
   "store_name": "store name from receipt header" (string),
   "receipt_date": "YYYY-MM-DD format date from receipt" (string),
   "total_amount": total amount paid as decimal number or null (number|null),
-  "tax_amount": tax amount as decimal number or null (number|null),
-  "items": array of line items, each with:
+  "tax_amount": total tax amount as decimal number or null (number|null),
+  "items": array of consolidated line items, each with:
     {
-      "item_name": "product name" (string, required),
-      "quantity": quantity as number (number, default 1),
-      "unit": "ea" unless clearly different (string),
-      "unit_price": unit price as decimal or null (number|null),
-      "total_price": line total as decimal or null (number|null),
+      "item_number": "store product/barcode code — digits only, no letters" (string or null),
+      "item_name": "product name from receipt" (string, required),
+      "quantity": number of units purchased (number, default 1),
+      "unit": "ea" or "lb" or other unit (string),
+      "unit_price": price per single unit as decimal or null (number|null),
+      "total_price": quantity x unit_price as decimal or null (number|null),
       "category": one of exactly: Produce, Meat, Dairy, Bakery, Frozen, Pantry, Beverages, Snacks, Household, Personal Care, Baby, Pet, Other (string)
     }
 }
+
+STORE-SPECIFIC QUANTITY RULES — apply whichever matches the receipt format:
+
+WALMART (format: "ITEM_NAME  123456789012  F  $PRICE"):
+  - item_number = 12-digit barcode printed AFTER the item name
+  - Multiple units = the same barcode appears on multiple consecutive lines at the same price
+  - CONSOLIDATE into ONE row: "MILD TACO 085176900775 2.26" x2 lines → {item_number:"085176900775", quantity:2, unit_price:2.26, total_price:4.52}
+
+PUBLIX (format: "ITEM_NAME  $PRICE  t  F"):
+  - item_number = null (Publix prints no product codes)
+  - Multiple units = same name + same price on consecutive lines
+  - CONSOLIDATE: "ORG APPLES GR SM  5.99  t  F" x2 → {quantity:2, unit_price:5.99, total_price:11.98}
+
+ALDI (format: "123456  Item Name  $TOTAL  FB" then sub-line "N x UNIT_PRICE"):
+  - item_number = 6-digit code printed BEFORE the item name
+  - Quantity is on the sub-line below the item: "2 x 4.25" means quantity=2, unit_price=4.25
+  - Weight items sub-line: "1.48 lb x 2.39/lb" means quantity=1.48, unit="lb", unit_price=2.39
+  - The main line price IS total_price (already multiplied); do NOT double-count
+
+COSTCO (format: "E  1234567  ITEM_NAME  $PRICE  E"):
+  - item_number = 7-digit code (ignore leading "E" or "A" tax-category letter)
+  - Multiple units = same item number on consecutive lines
+  - CONSOLIDATE: "E 1532925 CHOMPS STICK 18.99" x2 → {item_number:"1532925", quantity:2, unit_price:18.99, total_price:37.98}
+  - Include "Bottom of Basket" (BOB) items normally
+
+After consolidation, sum of all total_price values should equal the receipt subtotal (before tax).
 Return ONLY the JSON object, nothing else.`
+
+function deduplicateItems(items: ExtractedLineItem[]): ExtractedLineItem[] {
+  const byNumber = new Map<string, ExtractedLineItem>()
+  const byNamePrice = new Map<string, ExtractedLineItem>()
+  const result: ExtractedLineItem[] = []
+
+  for (const item of items) {
+    const numKey = item.item_number
+    const nameKey = `${item.item_name.toLowerCase()}|${item.unit_price ?? item.total_price ?? ''}`
+
+    if (numKey) {
+      const existing = byNumber.get(numKey)
+      if (existing) {
+        existing.quantity += item.quantity
+        if (existing.total_price != null && item.total_price != null) {
+          existing.total_price = Math.round((existing.total_price + item.total_price) * 100) / 100
+        }
+        continue
+      }
+      byNumber.set(numKey, item)
+    } else {
+      const existing = byNamePrice.get(nameKey)
+      if (existing) {
+        existing.quantity += item.quantity
+        if (existing.total_price != null && item.total_price != null) {
+          existing.total_price = Math.round((existing.total_price + item.total_price) * 100) / 100
+        }
+        continue
+      }
+      byNamePrice.set(nameKey, item)
+    }
+    result.push(item)
+  }
+
+  return result
+}
 
 export async function extractReceiptFromImage(
   file: File,
@@ -131,16 +195,17 @@ export async function extractReceiptFromImage(
     receipt_date: typeof p.receipt_date === 'string' ? p.receipt_date : '',
     total_amount: typeof p.total_amount === 'number' ? p.total_amount : null,
     tax_amount: typeof p.tax_amount === 'number' ? p.tax_amount : null,
-    items: (items as Record<string, unknown>[])
+    items: deduplicateItems((items as Record<string, unknown>[])
       .filter(item => item && typeof item.item_name === 'string' && String(item.item_name).trim())
       .map(item => ({
+        item_number: typeof item.item_number === 'string' && item.item_number.trim() ? item.item_number.trim() : null,
         item_name: String(item.item_name).trim().replace(/\s+/g, ' '),
-        quantity: typeof item.quantity === 'number' ? Math.max(1, item.quantity) : 1,
+        quantity: typeof item.quantity === 'number' && item.quantity > 0 ? item.quantity : 1,
         unit: typeof item.unit === 'string' && item.unit ? item.unit.trim() : 'ea',
         unit_price: typeof item.unit_price === 'number' ? item.unit_price : null,
         total_price: typeof item.total_price === 'number' ? item.total_price : null,
         category: VALID_CATEGORIES.includes(String(item.category)) ? String(item.category) : 'Other',
-      })),
+      }))),
   }
 }
 

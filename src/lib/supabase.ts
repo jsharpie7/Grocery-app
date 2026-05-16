@@ -57,6 +57,7 @@ export type ReceiptItem = {
   id: string
   receipt_id: string
   item_name: string
+  item_number: string | null
   quantity: number
   unit: string
   unit_price: number | null
@@ -69,6 +70,7 @@ export type Item = {
   id: string
   household_id: string
   name: string
+  item_number: string | null
   category: string
   created_at: string
 }

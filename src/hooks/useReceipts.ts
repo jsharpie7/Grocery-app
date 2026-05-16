@@ -3,9 +3,10 @@ import { supabase } from '../lib/supabase'
 import { uploadReceiptImage } from '../lib/storage'
 import { matchItem, normalizeStoreName } from '../lib/itemMatcher'
 import { useHouseholdStore } from '../store/householdStore'
-import type { Receipt, ReceiptItem } from '../lib/supabase'
+import type { Receipt, ReceiptItem, Item } from '../lib/supabase'
 
 export interface PendingLineItem {
+  item_number: string | null
   item_name: string
   quantity: number
   unit: string
@@ -75,7 +76,7 @@ export function useReceipts() {
 
   async function matchAndPrepareItems(
     pendingItems: PendingLineItem[],
-    existingItems: { id: string; name: string; household_id: string; category: string; created_at: string }[],
+    existingItems: Item[],
     storeId: string | null,
     receiptId: string,
   ): Promise<{ receiptItemRows: Omit<ReceiptItem, 'id'>[]; priceRows: { item_id: string; store_id: string | null; unit_price: number; receipt_id: string }[] }> {
@@ -83,24 +84,33 @@ export function useReceipts() {
     const priceRows: { item_id: string; store_id: string | null; unit_price: number; receipt_id: string }[] = []
 
     for (const pending of pendingItems) {
-      const matched = matchItem(pending.item_name, existingItems)
+      const matched = matchItem(pending.item_name, existingItems, pending.item_number)
       let itemId = matched?.id ?? null
 
       if (!itemId) {
         const { data: newItem, error: itemErr } = await supabase
           .from('items')
           .upsert(
-            { household_id: householdId!, name: pending.item_name.trim().replace(/\s+/g, ' '), category: pending.category },
+            {
+              household_id: householdId!,
+              name: pending.item_name.trim().replace(/\s+/g, ' '),
+              category: pending.category,
+              item_number: pending.item_number ?? null,
+            },
             { onConflict: 'household_id,name' }
           )
           .select()
           .single()
         if (!itemErr && newItem) itemId = newItem.id
+      } else if (matched && !matched.item_number && pending.item_number) {
+        // Back-fill item_number onto existing item that was matched by name
+        await supabase.from('items').update({ item_number: pending.item_number }).eq('id', matched.id)
       }
 
       receiptItemRows.push({
         receipt_id: receiptId,
         item_name: pending.item_name,
+        item_number: pending.item_number ?? null,
         quantity: pending.quantity,
         unit: pending.unit,
         unit_price: pending.unit_price,

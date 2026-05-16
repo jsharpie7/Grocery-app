@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { matchItem } from '../lib/itemMatcher'
 import type { Item } from '../lib/supabase'
 
-function makeItem(name: string): Item {
-  return { id: name, household_id: 'hh', name, category: 'Other', created_at: '' }
+function makeItem(name: string, item_number: string | null = null): Item {
+  return { id: name, household_id: 'hh', name, item_number, category: 'Other', created_at: '' }
 }
 
 describe('matchItem', () => {
