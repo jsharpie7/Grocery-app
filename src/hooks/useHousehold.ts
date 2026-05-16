@@ -14,21 +14,20 @@ export function useHousehold() {
     setLoading(true)
     setError(null)
     try {
+      const hhId = crypto.randomUUID()
       const inviteCode = Math.random().toString(36).substring(2, 8).toUpperCase()
 
-      const { data: hh, error: hhErr } = await supabase
+      const { error: hhErr } = await supabase
         .from('households')
-        .insert({ name, invite_code: inviteCode })
-        .select()
-        .single()
+        .insert({ id: hhId, name, invite_code: inviteCode })
       if (hhErr) throw hhErr
 
       const { error: memberErr } = await supabase
         .from('household_members')
-        .insert({ household_id: hh.id, user_id: user.id, role: 'admin', email: user.email ?? '' })
+        .insert({ household_id: hhId, user_id: user.id, role: 'admin', email: user.email ?? '' })
       if (memberErr) throw memberErr
 
-      setHousehold(hh.id, hh.name)
+      setHousehold(hhId, name)
     } catch (e) {
       setError((e as Error).message)
     } finally {
