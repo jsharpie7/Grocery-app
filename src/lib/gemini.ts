@@ -87,31 +87,28 @@ function deduplicateItems(items: ExtractedLineItem[]): ExtractedLineItem[] {
   const result: ExtractedLineItem[] = []
 
   for (const item of items) {
-    const numKey = item.item_number
-    const nameKey = `${item.item_name.toLowerCase()}|${item.unit_price ?? item.total_price ?? ''}`
+    // Normalize barcode: digits only, minimum 5 digits to be a real product code
+    const digits = item.item_number?.replace(/\D/g, '') ?? ''
+    const numKey = digits.length >= 5 ? digits : null
+    // Fallback key: name + price (handles Publix which has no barcodes)
+    const nameKey = `${item.item_name.toLowerCase().trim()}|${item.unit_price ?? item.total_price ?? ''}`
 
-    if (numKey) {
-      const existing = byNumber.get(numKey)
-      if (existing) {
-        existing.quantity += item.quantity
-        if (existing.total_price != null && item.total_price != null) {
-          existing.total_price = Math.round((existing.total_price + item.total_price) * 100) / 100
-        }
-        continue
+    const mergeInto = numKey ? byNumber.get(numKey) : byNamePrice.get(nameKey)
+    if (mergeInto) {
+      mergeInto.quantity = Math.round((mergeInto.quantity + item.quantity) * 1000) / 1000
+      if (mergeInto.total_price != null && item.total_price != null) {
+        mergeInto.total_price = Math.round((mergeInto.total_price + item.total_price) * 100) / 100
+      } else if (mergeInto.unit_price != null) {
+        mergeInto.total_price = Math.round(mergeInto.unit_price * mergeInto.quantity * 100) / 100
       }
-      byNumber.set(numKey, item)
-    } else {
-      const existing = byNamePrice.get(nameKey)
-      if (existing) {
-        existing.quantity += item.quantity
-        if (existing.total_price != null && item.total_price != null) {
-          existing.total_price = Math.round((existing.total_price + item.total_price) * 100) / 100
-        }
-        continue
-      }
-      byNamePrice.set(nameKey, item)
+      continue
     }
-    result.push(item)
+
+    // Update item_number to normalized digits for consistent storage
+    const clone = { ...item, item_number: numKey }
+    if (numKey) byNumber.set(numKey, clone)
+    else byNamePrice.set(nameKey, clone)
+    result.push(clone)
   }
 
   return result

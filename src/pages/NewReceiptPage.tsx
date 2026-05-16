@@ -432,9 +432,10 @@ export default function NewReceiptPage() {
                   <thead>
                     <tr className="text-xs text-gray-400">
                       <th className="text-left pb-1">Item</th>
+                      <th className="text-right pb-1 pr-2 w-12">Qty</th>
                       <th className="text-right pb-1 pr-2 w-16">Unit $</th>
                       <th className="text-right pb-1 pr-2 w-20">Total</th>
-                      <th className="text-left pb-1 pr-2 w-28">Category</th>
+                      <th className="text-left pb-1 pr-2 w-24">Category</th>
                       <th className="w-8"></th>
                     </tr>
                   </thead>

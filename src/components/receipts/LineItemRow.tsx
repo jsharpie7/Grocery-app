@@ -33,6 +33,16 @@ export default function LineItemRow({ item, index, onChange, onRemove }: LineIte
           )}
         </div>
       </td>
+      <td className="py-2 pr-2 w-12">
+        <input
+          type="number"
+          min="1"
+          step="1"
+          className="w-full rounded border border-gray-200 px-2 py-1 text-sm text-right"
+          value={item.quantity}
+          onChange={(e) => onChange(index, { quantity: Math.max(1, Number(e.target.value) || 1) })}
+        />
+      </td>
       <td className="py-2 pr-2 w-16">
         <input
           type="number"
@@ -55,7 +65,7 @@ export default function LineItemRow({ item, index, onChange, onRemove }: LineIte
           onChange={(e) => onChange(index, { total_price: e.target.value ? Number(e.target.value) : null })}
         />
       </td>
-      <td className="py-2 pr-2 w-28">
+      <td className="py-2 pr-2 w-24">
         <select
           className="w-full rounded border border-gray-200 px-1 py-1 text-xs"
           value={item.category}
