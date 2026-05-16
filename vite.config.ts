@@ -54,6 +54,10 @@ export default defineConfig({
       }
     })
   ],
+  // Expose both VITE_* and SUPABASE_* prefixes so the Vercel-Supabase
+  // integration's env vars (SUPABASE_URL, SUPABASE_ANON_KEY) work without
+  // needing to manually rename them in the Vercel dashboard.
+  envPrefix: ['VITE_', 'SUPABASE_'],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src')
