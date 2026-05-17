@@ -65,6 +65,9 @@ PUBLIX (format: "ITEM_NAME  $PRICE  t  F"):
   - item_number = null (Publix prints no product codes)
   - Multiple units = same name + same price on consecutive lines
   - CONSOLIDATE: "ORG APPLES GR SM  5.99  t  F" x2 → {quantity:2, unit_price:5.99, total_price:11.98}
+  - DISCOUNTS: "You Saved X.XX" lines appear below discounted items. The item price shown is
+    ALREADY the final after-discount price. IGNORE all "You Saved" lines completely —
+    do NOT include them as line items or subtract them from anything.
 
 ALDI (format: "123456  Item Name  $TOTAL  FB" then optional sub-line):
   - item_number = 6-digit code printed BEFORE the item name
