@@ -72,17 +72,33 @@ ALDI (format: "123456  Item Name  $TOTAL  FB" then sub-line "N x UNIT_PRICE"):
   - Weight items sub-line: "1.48 lb x 2.39/lb" means quantity=1.48, unit="lb", unit_price=2.39
   - The main line price IS total_price (already multiplied); do NOT double-count
 
-COSTCO (format: "E  1234567  ITEM_NAME  $PRICE  E"):
-  - item_number = 7-digit code (ignore leading "E" or "A" tax-category letter)
-  - Multiple units = same item number on consecutive lines
-  - CONSOLIDATE: "E 1532925 CHOMPS STICK 18.99" x2 → {item_number:"1532925", quantity:2, unit_price:18.99, total_price:37.98}
-  - Include "Bottom of Basket" (BOB) items normally
-  - DISCOUNTS: a discount line directly below an item looks like "I 1234567 ITEM_NAME -$X.XX E"
-    or a standalone "INSTANT SAVINGS -X.XX" or "MB SAVINGS -X.XX" line.
-    SUBTRACT the discount from that item's total_price and unit_price. Do NOT include the
-    discount as a separate line item.
-    Example: "E 1234567 OLIVE OIL 14.99 E" followed by "I 1234567 OLIVE OIL -3.00 E"
-    → {item_number:"1234567", unit_price:11.99, total_price:11.99}
+COSTCO (two line formats):
+  Regular items:  "E  1234567  ITEM_NAME  PRICE  E"
+  BOB items (Bottom of Basket, no leading E/A): "1234567  ITEM_NAME  PRICE  A"
+  - item_number = the 7-digit code; strip any leading "E" or "A" tax letter
+  - Multiple units = same item number on consecutive lines → CONSOLIDATE
+  - "E 1532925 CHOMPS STICK 18.99" ×4 lines → {item_number:"1532925", quantity:4, unit_price:18.99, total_price:75.96}
+
+  COSTCO DISCOUNTS — critical, read carefully:
+  Discount lines look like ONE of these:
+    "XXXXXXXX / TARGET_ITEM_NUMBER  AMOUNT-A"   (BOB item discount)
+    "E XXXXXXXX /TARGET_ITEM_NUMBER  AMOUNT-E"  (regular item discount)
+  The discount code starts with many zeros (e.g. 0000379004 or 0000380582).
+  The "/" followed by TARGET_ITEM_NUMBER identifies WHICH item the discount applies to.
+  The amount has a MINUS SUFFIX — "40.00-A" means subtract $40.00, NOT add.
+  SUBTRACT the discount from that item's total_price; recalculate unit_price = total_price / quantity.
+  Do NOT include discount lines as separate items.
+
+  Example 1 (BOB + discount):
+    "1872183 CANOPY 155.99 A" + "0000379004 / 1872183  40.00-A"
+    → {item_number:"1872183", item_name:"CANOPY", quantity:1, unit_price:115.99, total_price:115.99}
+
+  Example 2 (regular item ×2, each with its own discount line):
+    "E 1564814 ALMNDCRACKER 9.99 E"
+    "E 0000380582 /1564814  3.00-E"
+    "E 1564814 ALMNDCRACKER 9.99 E"
+    "E 0000380582 /1564814  3.00-E"
+    → {item_number:"1564814", item_name:"ALMNDCRACKER", quantity:2, unit_price:6.99, total_price:13.98}
 
 After consolidation, sum of all total_price values should equal the receipt subtotal (before tax).
 Return ONLY the JSON object, nothing else.`
