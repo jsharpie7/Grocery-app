@@ -3,11 +3,12 @@ import { supabase } from '../lib/supabase'
 import { uploadReceiptImage } from '../lib/storage'
 import { matchItem, normalizeStoreName } from '../lib/itemMatcher'
 import { useHouseholdStore } from '../store/householdStore'
-import type { Receipt, ReceiptItem, Item } from '../lib/supabase'
+import type { Receipt, ReceiptItem, Item, ItemAlias } from '../lib/supabase'
 
 export interface PendingLineItem {
   item_number: string | null
-  item_name: string
+  ocr_name: string | null       // original OCR name — never shown, used for alias creation
+  item_name: string             // display name (may be pre-filled from catalog or edited)
   quantity: number
   unit: string
   unit_price: number | null
@@ -32,6 +33,69 @@ export function useReceipts() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const { householdId, stores } = useHouseholdStore()
+
+  function findAlias(
+    ocrName: string,
+    normBarcode: string | null,
+    storeId: string | null,
+    aliases: (ItemAlias & { item: Item | null })[],
+  ): (ItemAlias & { item: Item | null }) | null {
+    const normName = ocrName.toLowerCase().trim()
+    const byBarcode = (a: ItemAlias & { item: Item | null }) =>
+      normBarcode && a.item_number?.replace(/\D/g, '') === normBarcode && a.item
+    const byName = (a: ItemAlias & { item: Item | null }) =>
+      a.receipt_name.toLowerCase().trim() === normName && a.item
+
+    return (
+      (normBarcode && storeId && aliases.find(a => a.store_id === storeId && byBarcode(a))) ||
+      (normBarcode && aliases.find(a => byBarcode(a))) ||
+      (storeId && aliases.find(a => a.store_id === storeId && byName(a))) ||
+      aliases.find(a => byName(a)) ||
+      null
+    )
+  }
+
+  async function resolveAliasesForReview(
+    extractedItems: { item_number: string | null; item_name: string; quantity: number; unit: string; unit_price: number | null; total_price: number | null; category: string }[],
+    storeId: string | null,
+  ): Promise<PendingLineItem[]> {
+    const base = extractedItems.map(i => ({
+      ocr_name: i.item_name,
+      item_name: i.item_name,
+      item_number: i.item_number,
+      quantity: i.quantity,
+      unit: i.unit,
+      unit_price: i.unit_price,
+      total_price: i.total_price,
+      category: i.category,
+      matchedItemId: null as string | null,
+      prevAvgPrice: null as number | null,
+    }))
+    if (!householdId || extractedItems.length === 0) return base
+
+    const [{ data: aliasData }, { data: itemData }] = await Promise.all([
+      supabase.from('item_aliases').select('*').eq('household_id', householdId),
+      supabase.from('items').select().eq('household_id', householdId),
+    ])
+    const items = (itemData ?? []) as Item[]
+    const aliases = ((aliasData ?? []) as ItemAlias[]).map(a => ({
+      ...a,
+      item: items.find(i => i.id === a.item_id) ?? null,
+    }))
+
+    return base.map((pending, idx) => {
+      const normBarcode = extractedItems[idx].item_number?.replace(/\D/g, '') ?? null
+      const alias = findAlias(pending.item_name, normBarcode, storeId, aliases)
+      if (alias?.item) {
+        return { ...pending, item_name: alias.item.name, category: alias.item.category, matchedItemId: alias.item_id }
+      }
+      const fuzzy = matchItem(pending.item_name, items, normBarcode)
+      if (fuzzy) {
+        return { ...pending, item_name: fuzzy.name, category: fuzzy.category, matchedItemId: fuzzy.id }
+      }
+      return pending
+    })
+  }
 
   async function fetchReceipts(limit = 50) {
     if (!householdId) return
@@ -77,40 +141,47 @@ export function useReceipts() {
   async function matchAndPrepareItems(
     pendingItems: PendingLineItem[],
     existingItems: Item[],
+    existingAliases: ItemAlias[],
     storeId: string | null,
     receiptId: string,
-  ): Promise<{ receiptItemRows: Omit<ReceiptItem, 'id'>[]; priceRows: { item_id: string; store_id: string | null; unit_price: number; receipt_id: string }[] }> {
+  ): Promise<{ receiptItemRows: Omit<ReceiptItem, 'id'>[]; priceRows: { item_id: string; store_id: string | null; unit_price: number; receipt_id: string }[]; newAliasRows: Omit<ItemAlias, 'id'>[] }> {
     const receiptItemRows: Omit<ReceiptItem, 'id'>[] = []
     const priceRows: { item_id: string; store_id: string | null; unit_price: number; receipt_id: string }[] = []
+    const newAliasRows: Omit<ItemAlias, 'id'>[] = []
+    const aliasesWithItems = existingAliases.map(a => ({ ...a, item: existingItems.find(i => i.id === a.item_id) ?? null }))
 
     for (const pending of pendingItems) {
-      const matched = matchItem(pending.item_name, existingItems, pending.item_number)
-      let itemId = matched?.id ?? null
+      const normBarcode = pending.item_number?.replace(/\D/g, '') ?? null
 
+      // Use matchedItemId from review if already resolved, otherwise re-match
+      let itemId = pending.matchedItemId ?? null
+      if (!itemId) {
+        const alias = findAlias(pending.ocr_name ?? pending.item_name, normBarcode, storeId, aliasesWithItems)
+        itemId = alias?.item_id ?? null
+      }
+      if (!itemId) {
+        const fuzzy = matchItem(pending.item_name, existingItems, normBarcode)
+        itemId = fuzzy?.id ?? null
+        if (fuzzy && !fuzzy.item_number && normBarcode) {
+          await supabase.from('items').update({ item_number: normBarcode }).eq('id', fuzzy.id)
+        }
+      }
       if (!itemId) {
         const { data: newItem, error: itemErr } = await supabase
           .from('items')
           .upsert(
-            {
-              household_id: householdId!,
-              name: pending.item_name.trim().replace(/\s+/g, ' '),
-              category: pending.category,
-              item_number: pending.item_number ?? null,
-            },
+            { household_id: householdId!, name: pending.item_name.trim().replace(/\s+/g, ' '), category: pending.category, item_number: normBarcode },
             { onConflict: 'household_id,name' }
           )
           .select()
           .single()
-        if (!itemErr && newItem) itemId = newItem.id
-      } else if (matched && !matched.item_number && pending.item_number) {
-        // Back-fill item_number onto existing item that was matched by name
-        await supabase.from('items').update({ item_number: pending.item_number }).eq('id', matched.id)
+        if (!itemErr && newItem) { itemId = newItem.id; existingItems.push(newItem) }
       }
 
       receiptItemRows.push({
         receipt_id: receiptId,
         item_name: pending.item_name,
-        item_number: pending.item_number ?? null,
+        item_number: normBarcode,
         quantity: pending.quantity,
         unit: pending.unit,
         unit_price: pending.unit_price,
@@ -119,12 +190,26 @@ export function useReceipts() {
         matched_item_id: itemId,
       })
 
+      // Prepare alias row if not already known
+      if (itemId) {
+        const ocrName = (pending.ocr_name ?? pending.item_name).trim()
+        const normName = ocrName.toLowerCase()
+        const exists = existingAliases.some(a =>
+          a.item_id === itemId &&
+          a.store_id === storeId &&
+          a.receipt_name.toLowerCase().trim() === normName
+        )
+        if (!exists) {
+          newAliasRows.push({ household_id: householdId!, item_id: itemId, store_id: storeId, receipt_name: ocrName, item_number: normBarcode })
+        }
+      }
+
       if (itemId && pending.unit_price != null) {
         priceRows.push({ item_id: itemId, store_id: storeId, unit_price: pending.unit_price, receipt_id: receiptId })
       }
     }
 
-    return { receiptItemRows, priceRows }
+    return { receiptItemRows, priceRows, newAliasRows }
   }
 
   async function createReceipt(input: CreateReceiptInput): Promise<{ receipt: Receipt | null; imageUploadFailed: boolean }> {
@@ -165,15 +250,16 @@ export function useReceipts() {
       receipt = receiptRow as Receipt
 
       try {
-        // Load existing items for matching
-        const { data: existingItems } = await supabase
-          .from('items')
-          .select()
-          .eq('household_id', householdId)
+        // Load existing items and aliases for matching
+        const [{ data: existingItems }, { data: aliasData }] = await Promise.all([
+          supabase.from('items').select().eq('household_id', householdId),
+          supabase.from('item_aliases').select('*').eq('household_id', householdId),
+        ])
 
-        const { receiptItemRows, priceRows } = await matchAndPrepareItems(
+        const { receiptItemRows, priceRows, newAliasRows } = await matchAndPrepareItems(
           input.items,
           existingItems ?? [],
+          (aliasData ?? []) as ItemAlias[],
           input.storeId,
           receipt.id,
         )
@@ -181,6 +267,10 @@ export function useReceipts() {
         if (receiptItemRows.length > 0) {
           const { error: riErr } = await supabase.from('receipt_items').insert(receiptItemRows)
           if (riErr) throw riErr
+        }
+
+        if (newAliasRows.length > 0) {
+          await supabase.from('item_aliases').upsert(newAliasRows, { onConflict: 'household_id,store_id,receipt_name', ignoreDuplicates: true })
         }
 
         if (priceRows.length > 0) {
@@ -219,5 +309,5 @@ export function useReceipts() {
     }
   }
 
-  return { receipts, error, loading, fetchReceipts, createReceipt, deleteReceipt, resolveStoreId }
+  return { receipts, error, loading, fetchReceipts, createReceipt, deleteReceipt, resolveStoreId, resolveAliasesForReview }
 }

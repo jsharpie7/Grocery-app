@@ -13,11 +13,16 @@ export default function LineItemRow({ item, index, onChange, onRemove }: LineIte
     <tr className="border-b border-gray-100">
       <td className="py-2 pr-2">
         <div>
-          <input
-            className="w-full rounded border border-gray-200 px-2 py-1 text-sm"
-            value={item.item_name}
-            onChange={(e) => onChange(index, { item_name: e.target.value })}
-          />
+          <div className="flex items-center gap-1">
+            <input
+              className="w-full rounded border border-gray-200 px-2 py-1 text-sm"
+              value={item.item_name}
+              onChange={(e) => onChange(index, { item_name: e.target.value })}
+            />
+            {item.matchedItemId && (
+              <span title="In your catalog" className="text-indigo-400 text-sm shrink-0">🏷</span>
+            )}
+          </div>
           {item.prevAvgPrice != null && (
             <div className="text-xs text-gray-400 mt-0.5">
               avg ${item.prevAvgPrice.toFixed(2)}

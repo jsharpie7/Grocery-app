@@ -84,6 +84,15 @@ export type ItemPrice = {
   receipt_id: string | null
 }
 
+export type ItemAlias = {
+  id: string
+  household_id: string
+  item_id: string
+  store_id: string | null
+  receipt_name: string
+  item_number: string | null
+}
+
 export type MonthlySpend = {
   month: string
   total: number

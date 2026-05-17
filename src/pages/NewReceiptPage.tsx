@@ -106,7 +106,7 @@ function reducer(state: State, action: Action): State {
     case 'REMOVE_ITEM':
       return { ...state, items: state.items.filter((_, i) => i !== action.index) }
     case 'ADD_ITEM':
-      return { ...state, items: [...state.items, { item_number: null, item_name: '', quantity: 1, unit: 'ea', unit_price: null, total_price: null, category: 'Other' }] }
+      return { ...state, items: [...state.items, { item_number: null, ocr_name: null, item_name: '', quantity: 1, unit: 'ea', unit_price: null, total_price: null, category: 'Other', matchedItemId: null, prevAvgPrice: null }] }
     case 'SAVE_START':
       return { ...state, step: 'saving', saveError: null, isDuplicate: false }
     case 'SAVE_ERROR':
@@ -128,7 +128,7 @@ export default function NewReceiptPage() {
   const navigate = useNavigate()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [state, dispatch] = useReducer(reducer, initial)
-  const { createReceipt, resolveStoreId } = useReceipts()
+  const { createReceipt, resolveStoreId, resolveAliasesForReview } = useReceipts()
   const { createStore } = useStores()
   const { geminiKey, setGeminiKey } = useHouseholdStore()
 
@@ -164,23 +164,15 @@ export default function NewReceiptPage() {
         if (!isNaN(d.getTime())) parsedDate = data.receipt_date
       }
 
+      const pendingItems = await resolveAliasesForReview(data.items, matchedStoreId)
+
       dispatch({
         type: 'EXTRACT_SUCCESS',
         storeName: data.store_name,
         receiptDate: parsedDate,
         totalAmount: data.total_amount != null ? String(data.total_amount) : '',
         taxAmount: data.tax_amount != null ? String(data.tax_amount) : '',
-        items: data.items.map((i) => ({
-          item_number: i.item_number ?? null,
-          item_name: i.item_name,
-          quantity: i.quantity,
-          unit: i.unit,
-          unit_price: i.unit_price,
-          total_price: i.total_price,
-          category: i.category,
-          matchedItemId: null,
-          prevAvgPrice: null,
-        })),
+        items: pendingItems,
       })
 
       if (matchedStoreId) {
