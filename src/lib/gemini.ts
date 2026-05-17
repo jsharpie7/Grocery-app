@@ -66,11 +66,16 @@ PUBLIX (format: "ITEM_NAME  $PRICE  t  F"):
   - Multiple units = same name + same price on consecutive lines
   - CONSOLIDATE: "ORG APPLES GR SM  5.99  t  F" x2 → {quantity:2, unit_price:5.99, total_price:11.98}
 
-ALDI (format: "123456  Item Name  $TOTAL  FB" then sub-line "N x UNIT_PRICE"):
+ALDI (format: "123456  Item Name  $TOTAL  FB" then optional sub-line):
   - item_number = 6-digit code printed BEFORE the item name
-  - Quantity is on the sub-line below the item: "2 x 4.25" means quantity=2, unit_price=4.25
-  - Weight items sub-line: "1.48 lb x 2.39/lb" means quantity=1.48, unit="lb", unit_price=2.39
+  - Sub-line "N x UNIT_PRICE": quantity=N, unit_price=UNIT_PRICE, total_price=main line price
+  - Sub-line "W lb x PRICE/lb": quantity=W, unit="lb", unit_price=PRICE, total_price=main line price
   - The main line price IS total_price (already multiplied); do NOT double-count
+  - VARIABLE WEIGHT ITEMS: same item_number appearing multiple times at DIFFERENT prices
+    means separate packages priced by weight. Consolidate into ONE row:
+    quantity=1, unit_price=sum of all package prices, total_price=unit_price.
+    Example: "385628 Org Chicken Breast 8.16" + "385628 Org Chicken Breast 7.64" + "385628 Org Chicken Breast 10.42"
+    → {item_number:"385628", item_name:"Org Chicken Breast", quantity:1, unit_price:26.22, total_price:26.22}
 
 COSTCO (two line formats):
   Regular items:  "E  1234567  ITEM_NAME  PRICE  E"
@@ -117,11 +122,23 @@ function deduplicateItems(items: ExtractedLineItem[]): ExtractedLineItem[] {
 
     const mergeInto = numKey ? byNumber.get(numKey) : byNamePrice.get(nameKey)
     if (mergeInto) {
-      mergeInto.quantity = Math.round((mergeInto.quantity + item.quantity) * 1000) / 1000
-      if (mergeInto.total_price != null && item.total_price != null) {
-        mergeInto.total_price = Math.round((mergeInto.total_price + item.total_price) * 100) / 100
-      } else if (mergeInto.unit_price != null) {
-        mergeInto.total_price = Math.round(mergeInto.unit_price * mergeInto.quantity * 100) / 100
+      const mergePrice = mergeInto.unit_price ?? mergeInto.total_price ?? 0
+      const itemPrice = item.unit_price ?? item.total_price ?? 0
+
+      if (Math.abs(mergePrice - itemPrice) <= 0.01) {
+        // Same price = multiple units of same item → standard consolidation
+        mergeInto.quantity = Math.round((mergeInto.quantity + item.quantity) * 1000) / 1000
+        if (mergeInto.total_price != null && item.total_price != null) {
+          mergeInto.total_price = Math.round((mergeInto.total_price + item.total_price) * 100) / 100
+        } else if (mergeInto.unit_price != null) {
+          mergeInto.total_price = Math.round(mergeInto.unit_price * mergeInto.quantity * 100) / 100
+        }
+      } else {
+        // Different prices = variable weight packages → qty stays 1, sum into unit_price/total
+        const newTotal = Math.round(((mergeInto.total_price ?? mergeInto.unit_price ?? 0) + (item.total_price ?? item.unit_price ?? 0)) * 100) / 100
+        mergeInto.total_price = newTotal
+        mergeInto.unit_price = newTotal
+        mergeInto.quantity = 1
       }
       continue
     }
