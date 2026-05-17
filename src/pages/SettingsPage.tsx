@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useHouseholdStore } from '../store/householdStore'
+import { useHouseholdStore, DEFAULT_CATEGORIES } from '../store/householdStore'
 import { useStores } from '../hooks/useStores'
 import { useAuth } from '../hooks/useAuth'
 import { validateGeminiKey } from '../lib/gemini'
@@ -8,13 +8,13 @@ import PageShell from '../components/layout/PageShell'
 import ErrorBanner from '../components/ui/ErrorBanner'
 import Spinner from '../components/ui/Spinner'
 
-type Tab = 'gemini' | 'household' | 'stores' | 'account'
+type Tab = 'gemini' | 'household' | 'stores' | 'categories' | 'account'
 
 const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#14b8a6', '#f97316', '#64748b']
 
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>('gemini')
-  const { geminiKey, setGeminiKey, householdId, householdName } = useHouseholdStore()
+  const { geminiKey, setGeminiKey, householdId, householdName, categories, setCategories } = useHouseholdStore()
   const { stores, fetchStores, createStore, updateStore, deleteStore } = useStores()
   const { user, signOut } = useAuth()
 
@@ -25,6 +25,7 @@ export default function SettingsPage() {
   const [inviteCode, setInviteCode] = useState<string | null>(null)
   const [newStoreName, setNewStoreName] = useState('')
   const [newStoreColor, setNewStoreColor] = useState('#6366f1')
+  const [newCategory, setNewCategory] = useState('')
 
   useEffect(() => {
     if (tab === 'stores') fetchStores()
@@ -60,7 +61,7 @@ export default function SettingsPage() {
     <PageShell title="Settings">
       {/* Tab bar */}
       <div className="flex overflow-x-auto border-b border-gray-200 bg-white">
-        {([['gemini', 'Gemini Key'], ['household', 'Household'], ['stores', 'Stores'], ['account', 'Account']] as [Tab, string][]).map(([id, label]) => (
+        {([['gemini', 'Gemini Key'], ['household', 'Household'], ['stores', 'Stores'], ['categories', 'Categories'], ['account', 'Account']] as [Tab, string][]).map(([id, label]) => (
           <button
             key={id}
             onClick={() => setTab(id)}
@@ -188,6 +189,63 @@ export default function SettingsPage() {
                 </div>
               ))}
             </div>
+          </>
+        )}
+
+        {/* ─── Categories ─────────────────────── */}
+        {tab === 'categories' && (
+          <>
+            <p className="text-sm text-gray-500">Customize the categories used when reviewing receipts.</p>
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="New category name"
+                className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                value={newCategory}
+                onChange={(e) => setNewCategory(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && newCategory.trim() && !categories.includes(newCategory.trim())) {
+                    setCategories([...categories, newCategory.trim()])
+                    setNewCategory('')
+                  }
+                }}
+              />
+              <button
+                onClick={() => {
+                  const trimmed = newCategory.trim()
+                  if (trimmed && !categories.includes(trimmed)) {
+                    setCategories([...categories, trimmed])
+                    setNewCategory('')
+                  }
+                }}
+                disabled={!newCategory.trim() || categories.includes(newCategory.trim())}
+                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              >
+                Add
+              </button>
+            </div>
+
+            <div className="rounded-2xl bg-white border border-gray-100 divide-y divide-gray-100">
+              {categories.map((cat) => (
+                <div key={cat} className="flex items-center justify-between px-4 py-3">
+                  <span className="text-sm font-medium text-gray-900">{cat}</span>
+                  <button
+                    onClick={() => setCategories(categories.filter((c) => c !== cat))}
+                    className="text-xs text-red-400 hover:text-red-600 font-medium"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setCategories(DEFAULT_CATEGORIES)}
+              className="w-full rounded-xl border border-gray-200 py-2.5 text-sm font-medium text-gray-500 hover:bg-gray-50"
+            >
+              Reset to defaults
+            </button>
           </>
         )}
 

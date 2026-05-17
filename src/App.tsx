@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import AuthProvider from './providers/AuthProvider'
 import { useAuthStore } from './store/authStore'
 import { useHouseholdStore } from './store/householdStore'
@@ -45,6 +45,9 @@ function AppRoutes() {
     )
   }
 
+  const location = useLocation()
+  const hideNav = location.pathname === '/receipts/new'
+
   return (
     <>
       <Routes>
@@ -56,7 +59,7 @@ function AppRoutes() {
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      <BottomNav />
+      {!hideNav && <BottomNav />}
     </>
   )
 }

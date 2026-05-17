@@ -1,5 +1,5 @@
 import type { PendingLineItem } from '../../hooks/useReceipts'
-import { CATEGORIES } from '../../lib/supabase'
+import { useHouseholdStore } from '../../store/householdStore'
 
 interface LineItemRowProps {
   item: PendingLineItem
@@ -9,6 +9,7 @@ interface LineItemRowProps {
 }
 
 export default function LineItemRow({ item, index, onChange, onRemove }: LineItemRowProps) {
+  const categories = useHouseholdStore((s) => s.categories)
   const expectedTotal = item.unit_price != null
     ? Math.round(item.unit_price * item.quantity * 100) / 100
     : null
@@ -97,7 +98,7 @@ export default function LineItemRow({ item, index, onChange, onRemove }: LineIte
           value={item.category}
           onChange={(e) => onChange(index, { category: e.target.value })}
         >
-          {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          {categories.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
       </td>
       <td className="py-2 w-8 text-center">
