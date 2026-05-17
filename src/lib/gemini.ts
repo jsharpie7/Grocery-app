@@ -77,6 +77,12 @@ COSTCO (format: "E  1234567  ITEM_NAME  $PRICE  E"):
   - Multiple units = same item number on consecutive lines
   - CONSOLIDATE: "E 1532925 CHOMPS STICK 18.99" x2 → {item_number:"1532925", quantity:2, unit_price:18.99, total_price:37.98}
   - Include "Bottom of Basket" (BOB) items normally
+  - DISCOUNTS: a discount line directly below an item looks like "I 1234567 ITEM_NAME -$X.XX E"
+    or a standalone "INSTANT SAVINGS -X.XX" or "MB SAVINGS -X.XX" line.
+    SUBTRACT the discount from that item's total_price and unit_price. Do NOT include the
+    discount as a separate line item.
+    Example: "E 1234567 OLIVE OIL 14.99 E" followed by "I 1234567 OLIVE OIL -3.00 E"
+    → {item_number:"1234567", unit_price:11.99, total_price:11.99}
 
 After consolidation, sum of all total_price values should equal the receipt subtotal (before tax).
 Return ONLY the JSON object, nothing else.`
