@@ -9,8 +9,26 @@ interface LineItemRowProps {
 }
 
 export default function LineItemRow({ item, index, onChange, onRemove }: LineItemRowProps) {
+  const expectedTotal = item.unit_price != null
+    ? Math.round(item.unit_price * item.quantity * 100) / 100
+    : null
+  const mathMismatch = expectedTotal != null && item.total_price != null
+    && Math.abs(item.total_price - expectedTotal) > 0.01
+
+  function handleUnitPriceChange(raw: string) {
+    const newPrice = raw ? Number(raw) : null
+    const newTotal = newPrice != null ? Math.round(newPrice * item.quantity * 100) / 100 : item.total_price
+    onChange(index, { unit_price: newPrice, total_price: newTotal })
+  }
+
+  function handleQuantityChange(raw: string) {
+    const newQty = Math.max(1, Number(raw) || 1)
+    const newTotal = item.unit_price != null ? Math.round(item.unit_price * newQty * 100) / 100 : item.total_price
+    onChange(index, { quantity: newQty, total_price: newTotal })
+  }
+
   return (
-    <tr className="border-b border-gray-100">
+    <tr className={`border-b border-gray-100 ${mathMismatch ? 'bg-orange-50' : ''}`}>
       <td className="py-2 pr-2">
         <div>
           <div className="flex items-center gap-1">
@@ -21,6 +39,9 @@ export default function LineItemRow({ item, index, onChange, onRemove }: LineIte
             />
             {item.matchedItemId && (
               <span title="In your catalog" className="text-indigo-400 text-sm shrink-0">🏷</span>
+            )}
+            {mathMismatch && (
+              <span title={`Expected $${expectedTotal?.toFixed(2)} (${item.unit_price} × ${item.quantity})`} className="text-orange-400 text-sm shrink-0">⚠</span>
             )}
           </div>
           {item.prevAvgPrice != null && (
@@ -45,7 +66,7 @@ export default function LineItemRow({ item, index, onChange, onRemove }: LineIte
           step="1"
           className="w-full rounded border border-gray-200 px-2 py-1 text-sm text-right"
           value={item.quantity}
-          onChange={(e) => onChange(index, { quantity: Math.max(1, Number(e.target.value) || 1) })}
+          onChange={(e) => handleQuantityChange(e.target.value)}
         />
       </td>
       <td className="py-2 pr-2 w-16">
@@ -56,7 +77,7 @@ export default function LineItemRow({ item, index, onChange, onRemove }: LineIte
           className="w-full rounded border border-gray-200 px-2 py-1 text-sm text-right"
           value={item.unit_price ?? ''}
           placeholder="—"
-          onChange={(e) => onChange(index, { unit_price: e.target.value ? Number(e.target.value) : null })}
+          onChange={(e) => handleUnitPriceChange(e.target.value)}
         />
       </td>
       <td className="py-2 pr-2 w-20">
@@ -64,7 +85,7 @@ export default function LineItemRow({ item, index, onChange, onRemove }: LineIte
           type="number"
           min="0"
           step="0.01"
-          className="w-full rounded border border-gray-200 px-2 py-1 text-sm text-right"
+          className={`w-full rounded border px-2 py-1 text-sm text-right ${mathMismatch ? 'border-orange-300 bg-orange-50' : 'border-gray-200'}`}
           value={item.total_price ?? ''}
           placeholder="—"
           onChange={(e) => onChange(index, { total_price: e.target.value ? Number(e.target.value) : null })}

@@ -264,6 +264,11 @@ export default function NewReceiptPage() {
   const itemSum = state.items.reduce((s, i) => s + Number(i.total_price ?? i.unit_price ?? 0), 0)
   const taxAmt = parseFloat(state.taxAmount || '0') || 0
   const totalAmt = parseFloat(state.totalAmount || '0') || 0
+  const suspectCount = state.items.filter(i => {
+    if (i.unit_price == null || i.total_price == null) return false
+    const expected = Math.round(i.unit_price * i.quantity * 100) / 100
+    return Math.abs(i.total_price - expected) > 0.01
+  }).length
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -416,7 +421,7 @@ export default function NewReceiptPage() {
               </div>
             </div>
 
-            <TotalMismatchWarning itemSum={itemSum} taxAmount={taxAmt} totalAmount={totalAmt} />
+            <TotalMismatchWarning itemSum={itemSum} taxAmount={taxAmt} totalAmount={totalAmt} suspectCount={suspectCount} />
 
             {/* Line items */}
             <div>

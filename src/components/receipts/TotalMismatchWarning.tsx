@@ -2,9 +2,10 @@ interface TotalMismatchWarningProps {
   itemSum: number
   taxAmount: number
   totalAmount: number
+  suspectCount: number
 }
 
-export default function TotalMismatchWarning({ itemSum, taxAmount, totalAmount }: TotalMismatchWarningProps) {
+export default function TotalMismatchWarning({ itemSum, taxAmount, totalAmount, suspectCount }: TotalMismatchWarningProps) {
   const computed = itemSum + taxAmount
   const diff = totalAmount > 0 ? computed - totalAmount : null
   const matches = diff !== null && Math.abs(diff) <= 0.01
@@ -29,6 +30,11 @@ export default function TotalMismatchWarning({ itemSum, taxAmount, totalAmount }
         <div className={`flex justify-between mt-1 font-medium ${matches ? 'text-green-700' : 'text-yellow-700'}`}>
           <span>{matches ? '✓ Matches receipt' : `⚠ Off by $${Math.abs(diff).toFixed(2)}`}</span>
           {!matches && <span>Receipt: ${totalAmount.toFixed(2)}</span>}
+        </div>
+      )}
+      {!matches && suspectCount > 0 && (
+        <div className="mt-2 text-xs text-orange-600 border-t border-orange-200 pt-2">
+          {suspectCount} item{suspectCount > 1 ? 's' : ''} highlighted below — unit × qty doesn't match total, likely where the error is
         </div>
       )}
     </div>
