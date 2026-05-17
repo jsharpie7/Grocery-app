@@ -310,7 +310,17 @@ export default function NewReceiptPage() {
             )}
 
             {state.imagePreview && (
-              <img src={state.imagePreview} alt="Receipt preview" className="w-full rounded-xl object-contain max-h-48" />
+              <div className="relative">
+                <img src={state.imagePreview} alt="Receipt preview" className="w-full rounded-xl object-contain max-h-48" />
+                {state.imageFile && state.extractError && (
+                  <button
+                    onClick={() => startExtract(state.imageFile!)}
+                    className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/40 text-white font-semibold text-sm gap-2"
+                  >
+                    <span>↺</span> Retry Scan
+                  </button>
+                )}
+              </div>
             )}
 
             <div className="grid grid-cols-2 gap-4">
