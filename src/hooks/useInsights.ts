@@ -1,18 +1,63 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useHouseholdStore } from '../store/householdStore'
-import type { MonthlySpend, StoreMonthlySpend, Item, ItemPrice } from '../lib/supabase'
+import type { MonthlySpend, StoreMonthlySpend } from '../lib/supabase'
 
 export interface TopItem {
-  item: Item
-  avgPrice: number
-  count: number
-  prices: ItemPrice[]
+  /** matched_item_id, or the normalized receipt name when the line never matched a catalog item. */
+  groupKey: string
+  /** null for unmatched line items (matched_item_id is SET NULL when a catalog item is deleted). */
+  itemId: string | null
+  displayName: string
+  category: string
+  totalSpend: number
+  purchaseCount: number
+  /** Most recent unit prices, newest first, for the price-history strip. */
+  recentPrices: number[]
 }
 
 export interface CategoryBreakdown {
   category: string
   total: number
+}
+
+export interface MtdComparison {
+  /** Spend so far in the current calendar month. */
+  currentTotal: number
+  /** Average of complete prior months, or null when there aren't any to average. */
+  typicalMonth: number | null
+}
+
+/**
+ * "$X so far this month vs. $Y in a typical month."
+ *
+ * Two months are deliberately excluded from the average:
+ *  - the current month, which is partial by definition (including it would drag
+ *    the baseline toward the very number it is supposed to be compared against);
+ *  - the oldest month in the series, which is *structurally* partial because
+ *    get_monthly_spend uses a rolling `CURRENT_DATE - N months` window, so its
+ *    first month starts mid-month. Averaging it as though it were a full month
+ *    permanently deflated the baseline.
+ *
+ * Pure and exported so the exclusions are unit-testable — the previous inline
+ * version assumed `monthlyData`'s last row was always the current month, which
+ * is false in any month that has no receipts yet.
+ */
+export function computeMtdComparison(monthlyData: MonthlySpend[], today: Date): MtdComparison {
+  const currentMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+
+  const currentRow = monthlyData.find((d) => d.month === currentMonthKey)
+  const currentTotal = currentRow ? Number(currentRow.total) : 0
+
+  // monthlyData arrives sorted ascending by month, so index 0 is the oldest.
+  const completePriorMonths = monthlyData
+    .filter((d) => d.month !== currentMonthKey)
+    .slice(1)
+
+  if (completePriorMonths.length === 0) return { currentTotal, typicalMonth: null }
+
+  const sum = completePriorMonths.reduce((s, d) => s + Number(d.total), 0)
+  return { currentTotal, typicalMonth: sum / completePriorMonths.length }
 }
 
 export function useInsights() {
@@ -43,48 +88,41 @@ export function useInsights() {
     setStoreMonthlyData((data as StoreMonthlySpend[]) ?? [])
   }
 
-  async function fetchTopItems(limit = 10) {
-    if (!householdId) return
+  /**
+   * Top items by total dollars spent.
+   *
+   * Aggregation happens in Postgres (get_top_items_by_spend) rather than here:
+   * the previous client-side version ranked by purchase COUNT while being
+   * labelled as spend, and read from item_prices, which stores no quantity and
+   * therefore cannot express dollars spent at all.
+   */
+  async function fetchTopItems(limit = 10, months = 12) {
     setError(null)
-    try {
-      const { data: items, error: itemsErr } = await supabase
-        .from('items')
-        .select()
-        .eq('household_id', householdId)
-        .limit(100)
-      if (itemsErr) { setError(itemsErr.message); return }
+    const { data, error: err } = await supabase.rpc('get_top_items_by_spend', {
+      p_months: months,
+      p_limit: limit,
+    })
+    if (err) { setError(err.message); return }
 
-      if (!items?.length) { setTopItems([]); return }
+    const rows = (data ?? []) as {
+      group_key: string
+      item_id: string | null
+      display_name: string
+      category: string
+      total_spend: number | string
+      purchase_count: number | string
+      recent_prices: (number | string)[] | null
+    }[]
 
-      const { data: prices, error: pricesErr } = await supabase
-        .from('item_prices')
-        .select()
-        .in('item_id', items.map((i) => i.id))
-        .order('purchased_at', { ascending: false })
-      if (pricesErr) { setError(pricesErr.message); return }
-
-      const pricesByItem = new Map<string, ItemPrice[]>()
-      for (const p of prices ?? []) {
-        const existing = pricesByItem.get(p.item_id) ?? []
-        existing.push(p)
-        pricesByItem.set(p.item_id, existing)
-      }
-
-      const result: TopItem[] = items
-        .map((item) => {
-          const itemPrices = pricesByItem.get(item.id) ?? []
-          if (!itemPrices.length) return null
-          const avg = itemPrices.reduce((s, p) => s + Number(p.unit_price), 0) / itemPrices.length
-          return { item, avgPrice: avg, count: itemPrices.length, prices: itemPrices }
-        })
-        .filter((x): x is TopItem => x !== null)
-        .sort((a, b) => b.count - a.count)
-        .slice(0, limit)
-
-      setTopItems(result)
-    } catch (e) {
-      setError((e as Error).message)
-    }
+    setTopItems(rows.map((r) => ({
+      groupKey: r.group_key,
+      itemId: r.item_id,
+      displayName: r.display_name,
+      category: r.category,
+      totalSpend: Number(r.total_spend),
+      purchaseCount: Number(r.purchase_count),
+      recentPrices: (r.recent_prices ?? []).map(Number),
+    })))
   }
 
   async function fetchCategoryBreakdown(months = 12) {

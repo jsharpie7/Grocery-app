@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts'
-import { useInsights } from '../hooks/useInsights'
+import { useInsights, computeMtdComparison } from '../hooks/useInsights'
 import { useReceipts } from '../hooks/useReceipts'
 import PageShell from '../components/layout/PageShell'
 import ReceiptCard from '../components/receipts/ReceiptCard'
@@ -26,15 +26,10 @@ export default function DashboardPage() {
 
   const now = new Date()
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-  const currentMonthData = monthlyData.find((d) => d.month === currentMonth)
-  const currentTotal = currentMonthData ? Number(currentMonthData.total) : 0
 
-  const avg =
-    monthlyData.length > 1
-      ? monthlyData.slice(0, -1).reduce((s, d) => s + Number(d.total), 0) / (monthlyData.length - 1)
-      : 0
-
-  const pctDelta = avg > 0 ? Math.round(((currentTotal - avg) / avg) * 100) : null
+  // One baseline, shared by the headline stat and the chart's reference line,
+  // so the two can never disagree about what a "typical month" is.
+  const { currentTotal, typicalMonth } = computeMtdComparison(monthlyData, now)
 
   const isEmpty = monthlyData.length === 0 && !insightsLoading
 
@@ -58,11 +53,11 @@ export default function DashboardPage() {
         <>
           {/* This month stat */}
           <div className="mx-4 mt-4 rounded-2xl bg-indigo-600 p-5 text-white">
-            <div className="text-sm opacity-80 mb-1">This Month</div>
+            <div className="text-sm opacity-80 mb-1">So far this month</div>
             <div className="text-3xl font-bold">${currentTotal.toFixed(2)}</div>
-            {pctDelta !== null && (
-              <div className={`text-sm mt-1 ${pctDelta > 0 ? 'text-red-200' : 'text-green-200'}`}>
-                {pctDelta > 0 ? '↑' : '↓'}{Math.abs(pctDelta)}% vs avg ${avg.toFixed(2)}/mo
+            {typicalMonth !== null && (
+              <div className="text-sm mt-1 opacity-80">
+                Typical month · ${typicalMonth.toFixed(2)}
               </div>
             )}
           </div>
@@ -83,10 +78,10 @@ export default function DashboardPage() {
                       <Cell key={d.month} fill={d.month === currentMonth ? '#4f46e5' : '#a5b4fc'} />
                     ))}
                   </Bar>
-                  {avg > 0 && (
+                  {typicalMonth !== null && typicalMonth > 0 && (
                     <Line
                       type="monotone"
-                      dataKey={() => avg}
+                      dataKey={() => typicalMonth}
                       stroke="#6366f1"
                       strokeDasharray="4 4"
                       dot={false}

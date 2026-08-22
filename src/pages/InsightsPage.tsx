@@ -99,21 +99,26 @@ export default function InsightsPage() {
           {tab === 'items' && (
             <div className="rounded-2xl bg-white border border-gray-100 divide-y divide-gray-100">
               {topItems.length === 0 ? (
-                <p className="px-4 py-6 text-sm text-gray-400 text-center">No item price data yet</p>
+                <p className="px-4 py-6 text-sm text-gray-400 text-center">No item spend data yet</p>
               ) : topItems.map((ti) => (
-                <div key={ti.item.id} className="px-4 py-3">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <div className="text-sm font-medium text-gray-900">{ti.item.name}</div>
-                      <div className="text-xs text-gray-400">{ti.item.category} · {ti.count} purchases</div>
+                <div key={ti.groupKey} className="px-4 py-3">
+                  <div className="flex justify-between items-start gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-gray-900 truncate">{ti.displayName}</div>
+                      <div className="text-xs text-gray-400">
+                        {ti.category} · {ti.purchaseCount} {ti.purchaseCount === 1 ? 'purchase' : 'purchases'}
+                      </div>
                     </div>
-                    <div className="text-sm font-semibold text-gray-900">${ti.avgPrice.toFixed(2)} avg</div>
+                    <div className="text-right shrink-0">
+                      <div className="text-sm font-semibold text-gray-900">${ti.totalSpend.toFixed(2)}</div>
+                      <div className="text-xs text-gray-400">total</div>
+                    </div>
                   </div>
-                  {ti.prices.length > 1 && (
+                  {ti.recentPrices.length > 1 && (
                     <div className="mt-2 flex gap-1 overflow-x-auto">
-                      {ti.prices.slice(0, 8).map((p, i) => (
+                      {ti.recentPrices.map((p, i) => (
                         <div key={i} className="shrink-0 text-xs text-gray-400 bg-gray-50 rounded px-1.5 py-0.5">
-                          ${Number(p.unit_price).toFixed(2)}
+                          ${p.toFixed(2)}
                         </div>
                       ))}
                     </div>
