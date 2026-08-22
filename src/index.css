@@ -9,6 +9,18 @@
     user-select: none;
   }
 
+  /* Form fields opt back IN to selection. The app-wide `user-select: none`
+     above gives the PWA its native feel, but it also made tapping into a text
+     input require a double-tap to place the caret / select text. */
+  input,
+  textarea,
+  select,
+  [contenteditable] {
+    -webkit-touch-callout: default;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
   body {
     @apply bg-gray-50 text-gray-900 overflow-hidden;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -19,8 +31,16 @@
     padding-right: env(safe-area-inset-right);
   }
 
+  /* Single source of truth for app height.
+     `svh` (smallest viewport height) stays static as the mobile address bar
+     shows/hides, instead of `vh`/`dvh` which resize mid-scroll and cause jank.
+     The insets are subtracted because `body` above already pads by them —
+     without this the shell would overflow the viewport by the inset amount. */
   #root {
-    @apply h-screen w-screen overflow-hidden;
+    @apply w-full overflow-hidden;
+    height: calc(
+      100svh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)
+    );
   }
 }
 
@@ -59,8 +79,15 @@
   animation: breathe 3s ease-in-out infinite;
 }
 
-/* Prevent text selection during drag/animation */
-.bubbles-container * {
-  user-select: none;
-  -webkit-user-select: none;
+/* iOS Safari auto-zooms the whole page when a focused form control's font-size
+   is under 16px, which yanks the layout around every time you tap a field.
+   Form controls across the app use Tailwind's `text-sm`/`text-xs` (14px/12px),
+   and a plain `input {}` rule loses to those utility classes on specificity.
+   The `[class]` attribute selector raises this to (0,1,1) so it outranks a
+   single utility class, and living outside `@layer` puts it after the
+   utilities in source order. One rule, so new inputs can't regress. */
+input[class],
+select[class],
+textarea[class] {
+  font-size: 16px;
 }

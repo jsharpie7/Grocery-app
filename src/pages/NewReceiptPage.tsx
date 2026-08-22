@@ -445,15 +445,15 @@ export default function NewReceiptPage() {
                 </button>
               </div>
               <div className="overflow-x-auto -mx-4 px-4">
-                <table className="w-full text-sm min-w-[480px]">
+                <table className="w-full text-sm min-w-[620px]">
                   <thead>
                     <tr className="text-xs text-gray-400">
                       <th className="text-left pb-1">Item</th>
-                      <th className="text-right pb-1 pr-2 w-12">Qty</th>
-                      <th className="text-right pb-1 pr-2 w-16">Unit $</th>
-                      <th className="text-right pb-1 pr-2 w-20">Total</th>
-                      <th className="text-left pb-1 pr-2 w-24">Category</th>
-                      <th className="w-8"></th>
+                      <th className="text-right pb-1 pr-2 w-16">Qty</th>
+                      <th className="text-right pb-1 pr-2 w-24">Unit $</th>
+                      <th className="text-right pb-1 pr-2 w-24">Total</th>
+                      <th className="text-left pb-1 pr-2 w-32">Category</th>
+                      <th className="w-10"></th>
                     </tr>
                   </thead>
                   <tbody>
