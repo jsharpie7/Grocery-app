@@ -250,6 +250,7 @@ function deduplicateItems(items: ExtractedLineItem[]): ExtractedLineItem[] {
 }
 
 export interface ScanDiagnostics {
+  buildId: string
   sourceBytes: number
   sourceDimensions: string | null
   sentBytes: number | null
@@ -290,6 +291,7 @@ export function formatDiagnostics(d: ScanDiagnostics): string[] {
     `sent: ${d.sentDimensions ?? '?'} (${formatBytes(d.sentBytes)})`,
     `prepare: ${(d.prepareMs / 1000).toFixed(1)}s · request: ${(d.requestMs / 1000).toFixed(1)}s · total: ${(d.totalMs / 1000).toFixed(1)}s`,
     `model: ${d.modelVersion ?? d.model}`,
+    `build: ${d.buildId}`,
   ]
   if (d.finishReason) lines.push(`finish: ${d.finishReason}`)
   if (d.promptTokens != null || d.outputTokens != null || d.thoughtTokens != null) {
@@ -335,6 +337,7 @@ export async function extractReceiptFromImage(
 ): Promise<ExtractedReceiptData> {
   const startedAt = performance.now()
   const diag: ScanDiagnostics = {
+    buildId: __BUILD_ID__,
     sourceBytes: file.size,
     sourceDimensions: null,
     sentBytes: null,
@@ -366,7 +369,16 @@ export async function extractReceiptFromImage(
     throw fail('Image is over 10MB. Please use a smaller file or compress the image.')
   }
 
-  const payload = await downscaleImage(file)
+  // Preparing the image is the one step that used to throw outside the instrumented region, so
+  // a failure here surfaced as a bare browser message ("Load failed") with no diagnostics at all
+  // — the exact blind spot this whole change exists to remove.
+  let payload: ImagePayload
+  try {
+    payload = await downscaleImage(file)
+  } catch (err) {
+    const detail = (err as Error).message || String(err)
+    throw fail(`Could not read the photo (${detail}). Pick it again from Camera or Gallery — a photo held open for a while, or still syncing from iCloud, can stop being readable.`)
+  }
   diag.prepareMs = Math.round(performance.now() - startedAt)
   diag.sentBytes = payload.bytes
   if (payload.sourceWidth && payload.sourceHeight) {
