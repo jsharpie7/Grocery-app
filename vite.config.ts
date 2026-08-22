@@ -3,7 +3,17 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
 
+// Vercel exposes the commit; fall back to a timestamp for local builds. Surfaced in the app's
+// scan diagnostics so a stale cached bundle can be identified from the phone in one look.
+const BUILD_ID = [
+  process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || 'local',
+  new Date().toISOString().slice(0, 16).replace('T', ' '),
+].join(' · ')
+
 export default defineConfig({
+  define: {
+    __BUILD_ID__: JSON.stringify(BUILD_ID),
+  },
   plugins: [
     react(),
     VitePWA({
