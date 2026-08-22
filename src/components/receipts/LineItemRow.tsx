@@ -34,7 +34,7 @@ export default function LineItemRow({ item, index, onChange, onRemove }: LineIte
         <div>
           <div className="flex items-center gap-1">
             <input
-              className="w-full rounded border border-gray-200 px-2 py-1 text-sm"
+              className="w-full min-h-[44px] rounded border border-gray-200 px-2 py-2"
               value={item.item_name}
               onChange={(e) => onChange(index, { item_name: e.target.value })}
             />
@@ -60,51 +60,51 @@ export default function LineItemRow({ item, index, onChange, onRemove }: LineIte
           )}
         </div>
       </td>
-      <td className="py-2 pr-2 w-12">
+      <td className="py-2 pr-2 w-16">
         <input
           type="number"
           min="1"
           step="1"
-          className="w-full rounded border border-gray-200 px-2 py-1 text-sm text-right"
+          className="w-full min-h-[44px] rounded border border-gray-200 px-2 py-2 text-right"
           value={item.quantity}
           onChange={(e) => handleQuantityChange(e.target.value)}
         />
       </td>
-      <td className="py-2 pr-2 w-16">
+      <td className="py-2 pr-2 w-24">
         <input
           type="number"
           min="0"
           step="0.01"
-          className="w-full rounded border border-gray-200 px-2 py-1 text-sm text-right"
+          className="w-full min-h-[44px] rounded border border-gray-200 px-2 py-2 text-right"
           value={item.unit_price ?? ''}
           placeholder="—"
           onChange={(e) => handleUnitPriceChange(e.target.value)}
         />
       </td>
-      <td className="py-2 pr-2 w-20">
+      <td className="py-2 pr-2 w-24">
         <input
           type="number"
           min="0"
           step="0.01"
-          className={`w-full rounded border px-2 py-1 text-sm text-right ${mathMismatch ? 'border-orange-300 bg-orange-50' : 'border-gray-200'}`}
+          className={`w-full min-h-[44px] rounded border px-2 py-2 text-right ${mathMismatch ? 'border-orange-300 bg-orange-50' : 'border-gray-200'}`}
           value={item.total_price ?? ''}
           placeholder="—"
           onChange={(e) => onChange(index, { total_price: e.target.value ? Number(e.target.value) : null })}
         />
       </td>
-      <td className="py-2 pr-2 w-24">
+      <td className="py-2 pr-2 w-32">
         <select
-          className="w-full rounded border border-gray-200 px-1 py-1 text-xs"
+          className="w-full min-h-[44px] rounded border border-gray-200 px-1 py-2"
           value={item.category}
           onChange={(e) => onChange(index, { category: e.target.value })}
         >
           {categories.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
       </td>
-      <td className="py-2 w-8 text-center">
+      <td className="py-2 w-10 text-center">
         <button
           onClick={() => onRemove(index)}
-          className="text-gray-400 hover:text-red-500 text-lg leading-none"
+          className="min-h-[44px] min-w-[36px] text-gray-400 hover:text-red-500 text-xl leading-none"
           aria-label="Remove item"
         >
           ×

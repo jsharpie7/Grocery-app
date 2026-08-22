@@ -21,7 +21,7 @@ function AppRoutes() {
 
   if (loading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-gray-50">
+      <div className="h-full flex items-center justify-center bg-gray-50">
         <Spinner size="lg" />
       </div>
     )
@@ -68,7 +68,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <div className="h-screen w-screen overflow-hidden bg-gray-50 flex flex-col">
+        <div className="h-full w-full overflow-hidden bg-gray-50 flex flex-col">
           <OfflineBanner />
           <div className="flex-1 overflow-hidden">
             <AppRoutes />
