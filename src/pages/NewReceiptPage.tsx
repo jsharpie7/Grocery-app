@@ -257,6 +257,7 @@ export default function NewReceiptPage() {
       <div className="flex flex-col items-center justify-center h-full gap-4">
         <Spinner size="lg" />
         <p className="text-gray-600 text-sm">Scanning with Gemini…</p>
+        <p className="text-gray-400 text-xs">Large receipts can take up to 45 seconds</p>
       </div>
     )
   }

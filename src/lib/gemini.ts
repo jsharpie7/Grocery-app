@@ -35,6 +35,37 @@ function fileToBase64(file: File): Promise<{ base64: string; mimeType: string }>
   })
 }
 
+// Phone photos can be 3000-4000px wide (several MB). Gemini reads receipts fine at a much
+// smaller size, and a smaller payload means less upload/encode time before the model even
+// starts — this is what actually made scans time out on long, multi-item receipts.
+const MAX_DIMENSION = 1600
+
+async function downscaleImage(file: File): Promise<{ base64: string; mimeType: string }> {
+  const bitmap = await createImageBitmap(file)
+  const scale = Math.min(1, MAX_DIMENSION / Math.max(bitmap.width, bitmap.height))
+
+  if (scale === 1 && file.type === 'image/jpeg') {
+    // Already small enough and already a JPEG — skip re-encoding
+    bitmap.close()
+    return fileToBase64(file)
+  }
+
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(bitmap.width * scale)
+  canvas.height = Math.round(bitmap.height * scale)
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    bitmap.close()
+    return fileToBase64(file)
+  }
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  bitmap.close()
+
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+  const [, base64] = dataUrl.split(',')
+  return { base64, mimeType: 'image/jpeg' }
+}
+
 const RECEIPT_PROMPT = `Analyze this grocery receipt image. Extract all purchased line items carefully.
 Return ONLY a JSON object (no markdown, no explanation) with exactly these fields:
 {
@@ -165,10 +196,10 @@ export async function extractReceiptFromImage(
     throw new Error('Image is over 10MB. Please use a smaller file or compress the image.')
   }
 
-  const { base64, mimeType } = await fileToBase64(file)
+  const { base64, mimeType } = await downscaleImage(file)
 
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 20000)
+  const timeout = setTimeout(() => controller.abort(), 45000)
 
   let response: Response
   try {
@@ -195,7 +226,7 @@ export async function extractReceiptFromImage(
     )
   } catch (err) {
     if ((err as Error).name === 'AbortError') {
-      throw new Error('Gemini scan timed out after 20 seconds. Try again.')
+      throw new Error('Gemini scan timed out after 45 seconds. Try again — large receipts with many items can take a while.')
     }
     throw err
   } finally {
