@@ -1,6 +1,6 @@
 import { useReducer, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { extractReceiptFromImage } from '../lib/gemini'
+import { extractReceiptFromImage, getLastScanDiagnostics, type ScanDiagnostics, type ScanError } from '../lib/gemini'
 import { normalizeStoreName } from '../lib/itemMatcher'
 import { useReceipts, type PendingLineItem } from '../hooks/useReceipts'
 import { useStores } from '../hooks/useStores'
@@ -10,6 +10,7 @@ import LineItemRow from '../components/receipts/LineItemRow'
 import TotalMismatchWarning from '../components/receipts/TotalMismatchWarning'
 import ErrorBanner from '../components/ui/ErrorBanner'
 import Spinner from '../components/ui/Spinner'
+import ScanDetails from '../components/receipts/ScanDetails'
 
 type Step = 'capture' | 'extracting' | 'review' | 'saving' | 'done'
 
@@ -29,13 +30,14 @@ interface State {
   imageUploadFailed: boolean
   geminiKeyMissing: boolean
   geminiKeyInput: string
+  scanDiagnostics: ScanDiagnostics | null
 }
 
 type Action =
   | { type: 'SET_FILE'; file: File; preview: string }
   | { type: 'EXTRACT_START' }
   | { type: 'EXTRACT_SUCCESS'; storeName: string; receiptDate: string; totalAmount: string; taxAmount: string; items: PendingLineItem[] }
-  | { type: 'EXTRACT_ERROR'; error: string }
+  | { type: 'EXTRACT_ERROR'; error: string; diagnostics: ScanDiagnostics | null }
   | { type: 'RETRY_EXTRACT' }
   | { type: 'SET_STORE'; storeId: string | null; storeName: string }
   | { type: 'SET_DATE'; date: string }
@@ -71,6 +73,7 @@ const initial: State = {
   imageUploadFailed: false,
   geminiKeyMissing: false,
   geminiKeyInput: '',
+  scanDiagnostics: null,
 }
 
 function reducer(state: State, action: Action): State {
@@ -78,7 +81,7 @@ function reducer(state: State, action: Action): State {
     case 'SET_FILE':
       return { ...state, imageFile: action.file, imagePreview: action.preview }
     case 'EXTRACT_START':
-      return { ...state, step: 'extracting', extractError: null }
+      return { ...state, step: 'extracting', extractError: null, scanDiagnostics: null }
     case 'EXTRACT_SUCCESS':
       return {
         ...state, step: 'review',
@@ -88,11 +91,12 @@ function reducer(state: State, action: Action): State {
         taxAmount: action.taxAmount,
         items: action.items,
         extractError: null,
+        scanDiagnostics: null,
       }
     case 'EXTRACT_ERROR':
-      return { ...state, step: 'capture', extractError: action.error }
+      return { ...state, step: 'capture', extractError: action.error, scanDiagnostics: action.diagnostics }
     case 'RETRY_EXTRACT':
-      return { ...state, step: 'capture', extractError: null }
+      return { ...state, step: 'capture', extractError: null, scanDiagnostics: null }
     case 'SET_STORE':
       return { ...state, storeId: action.storeId, storeName: action.storeName }
     case 'SET_DATE':
@@ -141,7 +145,7 @@ export default function NewReceiptPage() {
   async function startExtract(file: File) {
     const key = geminiKey.trim()
     if (!key) {
-      dispatch({ type: 'EXTRACT_ERROR', error: 'Gemini API key required. Enter your key below.' })
+      dispatch({ type: 'EXTRACT_ERROR', error: 'Gemini API key required. Enter your key below.', diagnostics: null })
       return
     }
     dispatch({ type: 'EXTRACT_START' })
@@ -180,7 +184,11 @@ export default function NewReceiptPage() {
         if (store) dispatch({ type: 'SET_STORE', storeId: matchedStoreId, storeName: store.name })
       }
     } catch (e) {
-      dispatch({ type: 'EXTRACT_ERROR', error: (e as Error).message })
+      dispatch({
+        type: 'EXTRACT_ERROR',
+        error: (e as Error).message,
+        diagnostics: (e as ScanError).diagnostics ?? getLastScanDiagnostics(),
+      })
     }
   }
 
@@ -288,6 +296,7 @@ export default function NewReceiptPage() {
         {state.step === 'capture' && (
           <div className="p-4 space-y-4">
             <ErrorBanner message={state.extractError} onDismiss={() => dispatch({ type: 'RETRY_EXTRACT' })} />
+            {state.extractError && <ScanDetails diagnostics={state.scanDiagnostics} />}
 
             {/* Gemini key entry inline if missing */}
             {!geminiKey.trim() && (

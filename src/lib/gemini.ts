@@ -21,49 +21,110 @@ const VALID_CATEGORIES = [
   'Beverages', 'Snacks', 'Household', 'Personal Care', 'Baby', 'Pet', 'Other',
 ]
 
-function fileToBase64(file: File): Promise<{ base64: string; mimeType: string }> {
+interface ImagePayload {
+  base64: string
+  mimeType: string
+  sourceWidth: number | null
+  sourceHeight: number | null
+  width: number | null
+  height: number | null
+  bytes: number
+}
+
+function approxBytesFromBase64(base64: string): number {
+  return Math.round((base64.length * 3) / 4)
+}
+
+function fileToBase64(file: File): Promise<ImagePayload> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => {
       const result = reader.result as string
       const [header, base64] = result.split(',')
       const mimeType = header.match(/:(.*?);/)?.[1] || 'image/jpeg'
-      resolve({ base64, mimeType })
+      resolve({
+        base64,
+        mimeType,
+        sourceWidth: null,
+        sourceHeight: null,
+        width: null,
+        height: null,
+        bytes: approxBytesFromBase64(base64),
+      })
     }
     reader.onerror = () => reject(new Error('Failed to read image file'))
     reader.readAsDataURL(file)
   })
 }
 
-// Phone photos can be 3000-4000px wide (several MB). Gemini reads receipts fine at a much
-// smaller size, and a smaller payload means less upload/encode time before the model even
-// starts — this is what actually made scans time out on long, multi-item receipts.
-const MAX_DIMENSION = 1600
+// Receipts are tall and narrow. Whether Gemini can read one comes down to how many pixels span a
+// single line of text — a function of WIDTH alone. Scaling by the longest edge shrinks a portrait
+// 3024x4032 photo to 1200x1600, and since a long receipt only occupies part of the frame that can
+// leave the printed text under 10px per character. An illegible image does not fail fast: the
+// model grinds on it and the request hits the timeout, which is why even short receipts started
+// timing out once downscaling shipped. Cap the width, let the height run.
+const MAX_WIDTH = 1600
+// Safety net so an unusually large or panoramic source can't produce a multi-megabyte payload.
+const MAX_PIXELS = 6_000_000
+// Receipt text is thin and high-contrast, exactly what aggressive JPEG quantisation smears.
+// Legibility is worth more here than a few hundred KB of upload.
+const JPEG_QUALITY = 0.92
 
-async function downscaleImage(file: File): Promise<{ base64: string; mimeType: string }> {
-  const bitmap = await createImageBitmap(file)
-  const scale = Math.min(1, MAX_DIMENSION / Math.max(bitmap.width, bitmap.height))
+// Exported for tests: the scale factor applied to a source image of the given dimensions.
+export function computeScale(width: number, height: number): number {
+  if (!width || !height) return 1
+  const widthScale = Math.min(1, MAX_WIDTH / width)
+  const pixelScale = Math.min(1, Math.sqrt(MAX_PIXELS / (width * height)))
+  return Math.min(widthScale, pixelScale)
+}
+
+async function downscaleImage(file: File): Promise<ImagePayload> {
+  let bitmap: ImageBitmap
+  try {
+    // imageOrientation must be explicit. Without it some mobile browsers ignore the EXIF rotation
+    // the camera wrote and the canvas bakes in a sideways receipt. Sending the raw file (the old
+    // path) preserved EXIF, so this only became a hazard once we started re-encoding.
+    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
+  } catch {
+    // Decode unsupported for this format — fall back to the original bytes rather than failing.
+    return fileToBase64(file)
+  }
+
+  const sourceWidth = bitmap.width
+  const sourceHeight = bitmap.height
+  const scale = computeScale(sourceWidth, sourceHeight)
 
   if (scale === 1 && file.type === 'image/jpeg') {
-    // Already small enough and already a JPEG — skip re-encoding
+    // Already small enough and already a JPEG — skip re-encoding (and keep its EXIF intact).
     bitmap.close()
-    return fileToBase64(file)
+    const payload = await fileToBase64(file)
+    return { ...payload, sourceWidth, sourceHeight, width: sourceWidth, height: sourceHeight }
   }
 
   const canvas = document.createElement('canvas')
-  canvas.width = Math.round(bitmap.width * scale)
-  canvas.height = Math.round(bitmap.height * scale)
+  canvas.width = Math.max(1, Math.round(sourceWidth * scale))
+  canvas.height = Math.max(1, Math.round(sourceHeight * scale))
   const ctx = canvas.getContext('2d')
   if (!ctx) {
     bitmap.close()
-    return fileToBase64(file)
+    const payload = await fileToBase64(file)
+    return { ...payload, sourceWidth, sourceHeight }
   }
+  ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
   bitmap.close()
 
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+  const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY)
   const [, base64] = dataUrl.split(',')
-  return { base64, mimeType: 'image/jpeg' }
+  return {
+    base64,
+    mimeType: 'image/jpeg',
+    sourceWidth,
+    sourceHeight,
+    width: canvas.width,
+    height: canvas.height,
+    bytes: approxBytesFromBase64(base64),
+  }
 }
 
 const RECEIPT_PROMPT = `Analyze this grocery receipt image. Extract all purchased line items carefully.
@@ -188,95 +249,265 @@ function deduplicateItems(items: ExtractedLineItem[]): ExtractedLineItem[] {
   return result
 }
 
+export interface ScanDiagnostics {
+  sourceBytes: number
+  sourceDimensions: string | null
+  sentBytes: number | null
+  sentDimensions: string | null
+  prepareMs: number
+  requestMs: number
+  totalMs: number
+  model: string
+  modelVersion: string | null
+  finishReason: string | null
+  promptTokens: number | null
+  thoughtTokens: number | null
+  outputTokens: number | null
+  itemCount: number | null
+  error: string | null
+}
+
+export type ScanError = Error & { diagnostics?: ScanDiagnostics }
+
+let lastDiagnostics: ScanDiagnostics | null = null
+
+export function getLastScanDiagnostics(): ScanDiagnostics | null {
+  return lastDiagnostics
+}
+
+function formatBytes(bytes: number | null): string {
+  if (bytes == null) return '?'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+// Renders the diagnostics as flat "label: value" lines so a failing scan can be read off the
+// phone screen (or pasted into a bug report) without a debugger attached.
+export function formatDiagnostics(d: ScanDiagnostics): string[] {
+  const lines = [
+    `photo: ${d.sourceDimensions ?? '?'} (${formatBytes(d.sourceBytes)})`,
+    `sent: ${d.sentDimensions ?? '?'} (${formatBytes(d.sentBytes)})`,
+    `prepare: ${(d.prepareMs / 1000).toFixed(1)}s · request: ${(d.requestMs / 1000).toFixed(1)}s · total: ${(d.totalMs / 1000).toFixed(1)}s`,
+    `model: ${d.modelVersion ?? d.model}`,
+  ]
+  if (d.finishReason) lines.push(`finish: ${d.finishReason}`)
+  if (d.promptTokens != null || d.outputTokens != null || d.thoughtTokens != null) {
+    lines.push(`tokens in/out/thinking: ${d.promptTokens ?? '?'} / ${d.outputTokens ?? '?'} / ${d.thoughtTokens ?? 0}`)
+  }
+  if (d.itemCount != null) lines.push(`items parsed: ${d.itemCount}`)
+  if (d.error) lines.push(`error: ${d.error}`)
+  return lines
+}
+
+// Floating aliases get re-pointed by Google without notice, which can change both latency and
+// whether thinking is actually disablable. Keep the choice in one place, allow an override
+// without a code change, and always record which version answered.
+const GEMINI_MODEL = import.meta.env.VITE_GEMINI_MODEL || 'gemini-2.5-flash'
+
+// A 60-item receipt consolidates to roughly 3k output tokens. The model's own default cap is
+// ~65k, so without this a single repetition loop generates for minutes and the only thing the
+// user ever sees is the request timeout. Capping it converts that into a fast, named failure.
+const MAX_OUTPUT_TOKENS = 8192
+
+// Deliberately left at 45s. The previous round raised this from 20s and it did not help — a
+// timeout is the symptom, not the cause. With a legible image and a bounded output, a scan that
+// cannot finish in 45s is not going to finish in 90s either.
+const REQUEST_TIMEOUT_MS = 45000
+
+interface GeminiResponse {
+  candidates?: Array<{
+    content?: { parts?: Array<{ text?: string }> }
+    finishReason?: string
+  }>
+  promptFeedback?: { blockReason?: string }
+  usageMetadata?: {
+    promptTokenCount?: number
+    candidatesTokenCount?: number
+    thoughtsTokenCount?: number
+  }
+  modelVersion?: string
+}
+
 export async function extractReceiptFromImage(
   file: File,
   apiKey: string,
 ): Promise<ExtractedReceiptData> {
-  if (file.size > 10 * 1024 * 1024) {
-    throw new Error('Image is over 10MB. Please use a smaller file or compress the image.')
+  const startedAt = performance.now()
+  const diag: ScanDiagnostics = {
+    sourceBytes: file.size,
+    sourceDimensions: null,
+    sentBytes: null,
+    sentDimensions: null,
+    prepareMs: 0,
+    requestMs: 0,
+    totalMs: 0,
+    model: GEMINI_MODEL,
+    modelVersion: null,
+    finishReason: null,
+    promptTokens: null,
+    thoughtTokens: null,
+    outputTokens: null,
+    itemCount: null,
+    error: null,
   }
 
-  const { base64, mimeType } = await downscaleImage(file)
+  // Every exit path records diagnostics, so a failure is always explainable after the fact.
+  function fail(message: string): ScanError {
+    diag.error = message
+    diag.totalMs = Math.round(performance.now() - startedAt)
+    lastDiagnostics = { ...diag }
+    const err = new Error(message) as ScanError
+    err.diagnostics = lastDiagnostics
+    return err
+  }
+
+  if (file.size > 10 * 1024 * 1024) {
+    throw fail('Image is over 10MB. Please use a smaller file or compress the image.')
+  }
+
+  const payload = await downscaleImage(file)
+  diag.prepareMs = Math.round(performance.now() - startedAt)
+  diag.sentBytes = payload.bytes
+  if (payload.sourceWidth && payload.sourceHeight) {
+    diag.sourceDimensions = `${payload.sourceWidth}x${payload.sourceHeight}`
+  }
+  if (payload.width && payload.height) {
+    diag.sentDimensions = `${payload.width}x${payload.height}`
+  }
 
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 45000)
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  const requestStartedAt = performance.now()
+  const markRequest = () => {
+    diag.requestMs = Math.round(performance.now() - requestStartedAt)
+  }
 
-  let response: Response
   try {
-    response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { inlineData: { mimeType, data: base64 } },
-              { text: RECEIPT_PROMPT },
-            ],
-          }],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            temperature: 0.1,
-            thinkingConfig: { thinkingBudget: 0 },
-          },
-        }),
-      },
-    )
-  } catch (err) {
-    if ((err as Error).name === 'AbortError') {
-      throw new Error('Gemini scan timed out after 45 seconds. Try again — large receipts with many items can take a while.')
+    let response: Response
+    try {
+      response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                { inlineData: { mimeType: payload.mimeType, data: payload.base64 } },
+                { text: RECEIPT_PROMPT },
+              ],
+            }],
+            generationConfig: {
+              responseMimeType: 'application/json',
+              temperature: 0.1,
+              maxOutputTokens: MAX_OUTPUT_TOKENS,
+              thinkingConfig: { thinkingBudget: 0 },
+            },
+          }),
+        },
+      )
+    } catch (err) {
+      markRequest()
+      if ((err as Error).name === 'AbortError') {
+        throw fail(
+          `Gemini scan timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds. Tap Retry — if it keeps happening, open Scan details below.`,
+        )
+      }
+      throw fail(`Could not reach Gemini: ${(err as Error).message}`)
     }
-    throw err
+
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => ({})) as { error?: { message?: string } }
+      markRequest()
+      const msg = errBody.error?.message || `Gemini API error ${response.status}`
+      if (response.status === 429) throw fail('Gemini quota exceeded. Try again in a moment.')
+      // A 400 is not automatically a bad key. A rejected generation config or an unknown model
+      // also lands here, and reporting those as "invalid key" sends troubleshooting the wrong
+      // way — so only claim that when the API actually says so, and pass its own words through
+      // otherwise.
+      if (response.status === 400 || response.status === 403) {
+        if (/api[ _-]?key/i.test(msg)) throw fail('Invalid Gemini API key.')
+        throw fail(`Gemini rejected the request: ${msg}`)
+      }
+      throw fail(msg)
+    }
+
+    // The timeout stays armed across the body read: aborting mid-stream is the only thing that
+    // stops a response that has sent headers but stalled before finishing. That means the read
+    // itself can abort, and it has to report as a timeout rather than a raw DOMException.
+    let data: GeminiResponse
+    try {
+      data = await response.json() as GeminiResponse
+    } catch (err) {
+      markRequest()
+      if ((err as Error).name === 'AbortError') {
+        throw fail(
+          `Gemini stalled mid-response and timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds. Tap Retry — if it keeps happening, open Scan details below.`,
+        )
+      }
+      throw fail('Gemini returned a response that could not be read. Try again.')
+    }
+    markRequest()
+
+    diag.modelVersion = data.modelVersion ?? null
+    diag.finishReason = data.candidates?.[0]?.finishReason ?? null
+    diag.promptTokens = data.usageMetadata?.promptTokenCount ?? null
+    diag.outputTokens = data.usageMetadata?.candidatesTokenCount ?? null
+    diag.thoughtTokens = data.usageMetadata?.thoughtsTokenCount ?? null
+
+    if (data.promptFeedback?.blockReason) {
+      throw fail(`Gemini refused the image (${data.promptFeedback.blockReason}). Try a clearer photo.`)
+    }
+    if (diag.finishReason === 'MAX_TOKENS') {
+      throw fail('The scan produced more output than a receipt should. Retry, or photograph the receipt in two halves.')
+    }
+
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+    if (!raw.trim()) {
+      throw fail(`Gemini returned an empty response${diag.finishReason ? ` (${diag.finishReason})` : ''}. Try again.`)
+    }
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
+
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(cleaned)
+    } catch {
+      throw fail('Gemini returned an unexpected response. Try again.')
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw fail('Unexpected response format from Gemini.')
+    }
+
+    const p = parsed as Record<string, unknown>
+    const rawItems = Array.isArray(p.items) ? p.items : []
+
+    const result: ExtractedReceiptData = {
+      store_name: typeof p.store_name === 'string' ? p.store_name.trim() : '',
+      receipt_date: typeof p.receipt_date === 'string' ? p.receipt_date : '',
+      total_amount: typeof p.total_amount === 'number' ? p.total_amount : null,
+      tax_amount: typeof p.tax_amount === 'number' ? p.tax_amount : null,
+      items: deduplicateItems((rawItems as Record<string, unknown>[])
+        .filter(item => item && typeof item.item_name === 'string' && String(item.item_name).trim())
+        .map(item => ({
+          item_number: typeof item.item_number === 'string' && item.item_number.trim() ? item.item_number.trim() : null,
+          item_name: String(item.item_name).trim().replace(/\s+/g, ' '),
+          quantity: typeof item.quantity === 'number' && item.quantity > 0 ? item.quantity : 1,
+          unit: typeof item.unit === 'string' && item.unit ? item.unit.trim() : 'ea',
+          unit_price: typeof item.unit_price === 'number' ? item.unit_price : null,
+          total_price: typeof item.total_price === 'number' ? item.total_price : null,
+          category: VALID_CATEGORIES.includes(String(item.category)) ? String(item.category) : 'Other',
+        }))),
+    }
+
+    diag.itemCount = result.items.length
+    diag.totalMs = Math.round(performance.now() - startedAt)
+    lastDiagnostics = { ...diag }
+    return result
   } finally {
     clearTimeout(timeout)
-  }
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({})) as { error?: { message?: string } }
-    const msg = err.error?.message || `Gemini API error ${response.status}`
-    if (response.status === 400) throw new Error('Invalid Gemini API key.')
-    if (response.status === 429) throw new Error('Gemini quota exceeded. Try again in a moment.')
-    throw new Error(msg)
-  }
-
-  const data = await response.json() as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
-  }
-  const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(cleaned)
-  } catch {
-    throw new Error('Gemini returned an unexpected response. Try again.')
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Unexpected response format from Gemini.')
-  }
-
-  const p = parsed as Record<string, unknown>
-  const items = Array.isArray(p.items) ? p.items : []
-
-  return {
-    store_name: typeof p.store_name === 'string' ? p.store_name.trim() : '',
-    receipt_date: typeof p.receipt_date === 'string' ? p.receipt_date : '',
-    total_amount: typeof p.total_amount === 'number' ? p.total_amount : null,
-    tax_amount: typeof p.tax_amount === 'number' ? p.tax_amount : null,
-    items: deduplicateItems((items as Record<string, unknown>[])
-      .filter(item => item && typeof item.item_name === 'string' && String(item.item_name).trim())
-      .map(item => ({
-        item_number: typeof item.item_number === 'string' && item.item_number.trim() ? item.item_number.trim() : null,
-        item_name: String(item.item_name).trim().replace(/\s+/g, ' '),
-        quantity: typeof item.quantity === 'number' && item.quantity > 0 ? item.quantity : 1,
-        unit: typeof item.unit === 'string' && item.unit ? item.unit.trim() : 'ea',
-        unit_price: typeof item.unit_price === 'number' ? item.unit_price : null,
-        total_price: typeof item.total_price === 'number' ? item.total_price : null,
-        category: VALID_CATEGORIES.includes(String(item.category)) ? String(item.category) : 'Other',
-      }))),
   }
 }
 
