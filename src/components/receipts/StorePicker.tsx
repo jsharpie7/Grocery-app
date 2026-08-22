@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useHouseholdStore } from '../../store/householdStore'
 import { normalizeStoreName } from '../../lib/itemMatcher'
+import StoreBadge from '../ui/StoreBadge'
 
 interface StorePickerProps {
   storeId: string | null
@@ -43,13 +44,14 @@ export default function StorePicker({ storeId, storeName, onChange, onCreateStor
           <button
             key={store.id}
             onClick={() => onChange(store.id, store.name)}
-            className={`rounded-full px-3 py-1 text-sm border transition-colors ${
+            className={`flex items-center gap-1.5 rounded-full py-1 pl-1 pr-3 text-sm border transition-colors ${
               storeId === store.id
                 ? 'text-white border-transparent'
                 : 'bg-white text-gray-600 border-gray-300'
             }`}
             style={storeId === store.id ? { backgroundColor: store.color, borderColor: store.color } : {}}
           >
+            <StoreBadge name={store.name} color={store.color} className="h-6 w-6 text-[10px]" />
             {store.name}
           </button>
         ))}

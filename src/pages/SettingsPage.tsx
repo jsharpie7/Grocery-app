@@ -7,6 +7,7 @@ import { supabase } from '../lib/supabase'
 import PageShell from '../components/layout/PageShell'
 import ErrorBanner from '../components/ui/ErrorBanner'
 import Spinner from '../components/ui/Spinner'
+import StoreBadge from '../components/ui/StoreBadge'
 
 type Tab = 'gemini' | 'household' | 'stores' | 'categories' | 'account'
 
@@ -15,7 +16,7 @@ const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6'
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>('gemini')
   const { geminiKey, setGeminiKey, householdId, householdName, categories, setCategories } = useHouseholdStore()
-  const { stores, fetchStores, createStore, updateStore, deleteStore } = useStores()
+  const { stores, error: storesError, fetchStores, createStore, updateStore, deleteStore } = useStores()
   const { user, signOut } = useAuth()
 
   const [keyInput, setKeyInput] = useState(geminiKey)
@@ -26,6 +27,9 @@ export default function SettingsPage() {
   const [newStoreName, setNewStoreName] = useState('')
   const [newStoreColor, setNewStoreColor] = useState('#6366f1')
   const [newCategory, setNewCategory] = useState('')
+  const [editingStoreId, setEditingStoreId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editColor, setEditColor] = useState('#6366f1')
 
   useEffect(() => {
     if (tab === 'stores') fetchStores()
@@ -52,9 +56,34 @@ export default function SettingsPage() {
     if (!newStoreName.trim()) return
     setStoreError(null)
     const result = await createStore(newStoreName.trim(), newStoreColor)
-    if (!result) { setStoreError('Failed to create store'); return }
+    if (!result) {
+      // Surface the hook's specific reason (e.g. the duplicate-name message)
+      // rather than a generic failure string that hides what went wrong.
+      setStoreError(storesError ?? 'Failed to create store')
+      return
+    }
     setNewStoreName('')
     setNewStoreColor('#6366f1')
+  }
+
+  function startStoreEdit(store: { id: string; name: string; color: string }) {
+    setStoreError(null)
+    setEditingStoreId(store.id)
+    setEditName(store.name)
+    setEditColor(store.color)
+  }
+
+  function cancelStoreEdit() {
+    setEditingStoreId(null)
+    setStoreError(null)
+  }
+
+  async function saveStoreEdit(id: string) {
+    if (!editName.trim()) return
+    setStoreError(null)
+    const ok = await updateStore(id, { name: editName, color: editColor })
+    if (!ok) { setStoreError(storesError ?? 'Failed to update store'); return }
+    setEditingStoreId(null)
   }
 
   return (
@@ -177,16 +206,64 @@ export default function SettingsPage() {
               {stores.length === 0 ? (
                 <p className="px-4 py-6 text-sm text-gray-400 text-center">No stores yet. Add one above.</p>
               ) : stores.map((store) => (
-                <div key={store.id} className="flex items-center gap-3 px-4 py-3">
-                  <div className="h-8 w-8 rounded-full shrink-0" style={{ backgroundColor: store.color }} />
-                  <span className="flex-1 text-sm font-medium text-gray-900">{store.name}</span>
-                  <button
-                    onClick={() => deleteStore(store.id)}
-                    className="text-xs text-red-400 hover:text-red-600 font-medium"
-                  >
-                    Remove
-                  </button>
-                </div>
+                editingStoreId === store.id ? (
+                  <div key={store.id} className="px-4 py-3 space-y-3">
+                    <div className="flex items-center gap-3">
+                      <StoreBadge name={editName || store.name} color={editColor} />
+                      <input
+                        type="text"
+                        className="flex-1 min-h-[44px] rounded-lg border border-gray-300 px-3 py-2"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') saveStoreEdit(store.id) }}
+                        autoFocus
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {COLORS.map((c) => (
+                        <button
+                          key={c}
+                          onClick={() => setEditColor(c)}
+                          aria-label={`Colour ${c}`}
+                          className="h-8 w-8 rounded-full border-2 transition-all"
+                          style={{ backgroundColor: c, borderColor: editColor === c ? '#1e293b' : 'transparent' }}
+                        />
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => saveStoreEdit(store.id)}
+                        disabled={!editName.trim()}
+                        className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={cancelStoreEdit}
+                        className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => deleteStore(store.id)}
+                        className="ml-auto rounded-lg px-3 py-2 text-sm font-medium text-red-500 hover:bg-red-50"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div key={store.id} className="flex items-center gap-3 px-4 py-3">
+                    <StoreBadge name={store.name} color={store.color} />
+                    <span className="flex-1 text-sm font-medium text-gray-900">{store.name}</span>
+                    <button
+                      onClick={() => startStoreEdit(store)}
+                      className="text-xs text-indigo-500 hover:text-indigo-700 font-medium"
+                    >
+                      Edit
+                    </button>
+                  </div>
+                )
               ))}
             </div>
           </>
