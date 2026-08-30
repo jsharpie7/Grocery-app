@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useHouseholdStore, DEFAULT_CATEGORIES } from '../store/householdStore'
 import { useStores } from '../hooks/useStores'
 import { useAuth } from '../hooks/useAuth'
-import { validateGeminiKey } from '../lib/gemini'
+import { validateGeminiKey, MODEL_CHOICES } from '../lib/gemini'
 import { supabase } from '../lib/supabase'
 import PageShell from '../components/layout/PageShell'
 import ErrorBanner from '../components/ui/ErrorBanner'
@@ -15,7 +15,7 @@ const COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6'
 
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>('gemini')
-  const { geminiKey, setGeminiKey, householdId, householdName, categories, setCategories } = useHouseholdStore()
+  const { geminiKey, setGeminiKey, geminiModel, setGeminiModel, householdId, householdName, categories, setCategories } = useHouseholdStore()
   const { stores, error: storesError, fetchStores, createStore, updateStore, deleteStore } = useStores()
   const { user, signOut } = useAuth()
 
@@ -137,6 +137,33 @@ export default function SettingsPage() {
                   {keyError}
                 </div>
               )}
+            </div>
+
+            <div className="space-y-2 pt-2">
+              <p className="text-sm font-medium text-gray-800">Model</p>
+              <p className="text-xs text-gray-500">
+                Flash-Lite is fastest because it does not &ldquo;think&rdquo; before answering, which is
+                what receipt scanning wants. Switch to a Flash model if items are being read wrong.
+              </p>
+              <div className="rounded-2xl bg-white border border-gray-100 divide-y divide-gray-100">
+                {MODEL_CHOICES.map((choice) => (
+                  <button
+                    key={choice.id}
+                    onClick={() => setGeminiModel(choice.id)}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-left"
+                  >
+                    <span
+                      className={`h-4 w-4 shrink-0 rounded-full border-2 ${
+                        geminiModel === choice.id ? 'border-indigo-600 bg-indigo-600' : 'border-gray-300'
+                      }`}
+                    />
+                    <span className="flex-1">
+                      <span className="block text-sm font-medium text-gray-900">{choice.label}</span>
+                      <span className="block font-mono text-xs text-gray-400">{choice.id}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
           </>
         )}
