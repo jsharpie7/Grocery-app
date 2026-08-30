@@ -318,7 +318,7 @@ export function formatDiagnostics(d: ScanDiagnostics): string[] {
 // with no change on our side.
 export const MODEL_CHOICES = [
   { id: 'gemini-2.5-flash-lite', label: 'Flash-Lite 2.5 — fastest, thinking off (default)' },
-  { id: 'gemini-3.5-flash-lite', label: 'Flash-Lite 3.5 — newer, still fast' },
+  { id: 'gemini-3.5-flash-lite', label: 'Flash-Lite 3.5 — newer; thinks unless told not to' },
   { id: 'gemini-3.6-flash', label: 'Flash 3.6 — slower, better at messy photos' },
   { id: 'gemini-2.5-flash', label: 'Flash 2.5 — previous default' },
 ] as const
@@ -329,6 +329,15 @@ export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash-lite'
 // ~65k, so without this a single repetition loop generates for minutes and the only thing the
 // user ever sees is the request timeout. Capping it converts that into a fast, named failure.
 const MAX_OUTPUT_TOKENS = 8192
+
+// Whether thinking runs was being left to each model's default, which differs per model and is
+// not something we should be guessing at: Google documents 2.5-flash-lite as thinking-off but
+// the rest of the family as thinking-on. Reading a receipt is transcription, so ask for the
+// least. 'low' is the one level every model in MODEL_CHOICES accepts.
+//
+// thinkingLevel is the current parameter. The old thinkingBudget is legacy and the two are
+// mutually exclusive — sending both is a 400 — which is why nothing here sets a budget.
+const THINKING_LEVEL = 'low'
 
 
 // Deliberately left at 45s. The previous round raised this from 20s and it did not help — a
@@ -428,15 +437,19 @@ export async function extractReceiptFromImage(
           signal: controller.signal,
           body: JSON.stringify({
             contents: [{
+              // Text before image: Google's image-understanding guide specifies this ordering
+              // for a single image containing text, which is exactly the receipt case. We had
+              // it the other way round.
               parts: [
-                { inlineData: { mimeType: payload.mimeType, data: payload.base64 } },
                 { text: RECEIPT_PROMPT },
+                { inlineData: { mimeType: payload.mimeType, data: payload.base64 } },
               ],
             }],
             generationConfig: {
               responseMimeType: 'application/json',
               temperature: 0.1,
               maxOutputTokens: MAX_OUTPUT_TOKENS,
+              thinkingConfig: { thinkingLevel: THINKING_LEVEL },
             },
           }),
         },
