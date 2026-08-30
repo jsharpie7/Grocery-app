@@ -14,18 +14,6 @@
 **Priority:** P3
 **Depends on:** User supplying actual logo image files (or choosing a licensed logo API)
 
-### Tap-to-open edit-sheet redesign for line-item editing
-
-**What:** Replace the packed inline table row in the receipt review screen with a full-width, tap-to-open edit panel per line item, instead of editing inline in a dense multi-column row.
-
-**Why:** Fixes the underlying cramped-layout problem itself, not just the symptoms (double-tap-to-select, tiny tap targets) that the targeted CSS fixes address this round.
-
-**Context:** This round ships targeted fixes (dvh units, 16px+ font, larger tap targets, scoped text-selection) that directly resolve the specific friction reported. If the review table still feels visually cramped on a phone after using those fixes for a while, this is the natural next step — tapping a row opens a full-width edit sheet with room for more context per edit (catalog match, price history) that doesn't fit in a table row today.
-
-**Effort:** L
-**Priority:** P3
-**Depends on:** Using the targeted CSS fixes first to see if they're sufficient
-
 ### Hook-level tests with mocked Supabase responses
 
 **What:** Establish a testing pattern (e.g. `vi.mock('../lib/supabase')`) for hook-level error-path coverage. Currently this project's Vitest setup only unit-tests pure functions (`itemMatcher.test.ts`, etc.).

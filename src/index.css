@@ -67,6 +67,45 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
+  /* Bottom-anchored bars are `fixed`, so they position against the viewport and
+     skip the safe-area padding `body` carries. Without this they sit under the
+     home indicator on a notched phone. */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .pb-safe-nav {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.75rem);
+  }
+}
+
+/* Bottom sheet: slides up from the bottom edge with an iOS-style ease-out so it
+   reads as the row expanding rather than a dialog appearing. */
+@keyframes sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.animate-sheet-in {
+  animation: sheet-in 220ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fade-in 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-sheet-in,
+  .animate-fade-in,
+  .animate-breathe {
+    animation: none;
+  }
 }
 
 /* Bubble breathing animation */

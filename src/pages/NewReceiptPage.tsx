@@ -6,11 +6,14 @@ import { useReceipts, type PendingLineItem } from '../hooks/useReceipts'
 import { useStores } from '../hooks/useStores'
 import { useHouseholdStore } from '../store/householdStore'
 import StorePicker from '../components/receipts/StorePicker'
-import LineItemRow from '../components/receipts/LineItemRow'
+import ItemCard from '../components/receipts/ItemCard'
+import ItemEditSheet from '../components/receipts/ItemEditSheet'
 import TotalMismatchWarning from '../components/receipts/TotalMismatchWarning'
 import ErrorBanner from '../components/ui/ErrorBanner'
 import Spinner from '../components/ui/Spinner'
 import ScanDetails from '../components/receipts/ScanDetails'
+import { hasMathMismatch } from '../lib/lineItem'
+import { selectAllOnFocus } from '../lib/selectOnFocus'
 
 type Step = 'capture' | 'extracting' | 'review' | 'saving' | 'done'
 
@@ -31,6 +34,10 @@ interface State {
   geminiKeyMissing: boolean
   geminiKeyInput: string
   scanDiagnostics: ScanDiagnostics | null
+  /** Index of the item open in the edit sheet, or null when the list is showing. */
+  editingIndex: number | null
+  /** Narrows the list to lines whose unit x qty doesn't match their total. */
+  flaggedOnly: boolean
 }
 
 type Action =
@@ -52,6 +59,9 @@ type Action =
   | { type: 'FORCE_SAVE' }
   | { type: 'SET_GEMINI_KEY_INPUT'; value: string }
   | { type: 'GEMINI_KEY_SET' }
+  | { type: 'OPEN_EDITOR'; index: number }
+  | { type: 'CLOSE_EDITOR' }
+  | { type: 'SET_FLAGGED_ONLY'; value: boolean }
 
 function today() {
   return new Date().toISOString().split('T')[0]
@@ -74,6 +84,8 @@ const initial: State = {
   geminiKeyMissing: false,
   geminiKeyInput: '',
   scanDiagnostics: null,
+  editingIndex: null,
+  flaggedOnly: false,
 }
 
 function reducer(state: State, action: Action): State {
@@ -92,6 +104,8 @@ function reducer(state: State, action: Action): State {
         items: action.items,
         extractError: null,
         scanDiagnostics: null,
+        editingIndex: null,
+        flaggedOnly: false,
       }
     case 'EXTRACT_ERROR':
       return { ...state, step: 'capture', extractError: action.error, scanDiagnostics: action.diagnostics }
@@ -107,10 +121,24 @@ function reducer(state: State, action: Action): State {
       return { ...state, taxAmount: action.tax }
     case 'UPDATE_ITEM':
       return { ...state, items: state.items.map((it, i) => i === action.index ? { ...it, ...action.updates } : it) }
-    case 'REMOVE_ITEM':
-      return { ...state, items: state.items.filter((_, i) => i !== action.index) }
-    case 'ADD_ITEM':
-      return { ...state, items: [...state.items, { item_number: null, ocr_name: null, item_name: '', quantity: 1, unit: 'ea', unit_price: null, total_price: null, category: 'Other', matchedItemId: null, prevAvgPrice: null }] }
+    case 'REMOVE_ITEM': {
+      const items = state.items.filter((_, i) => i !== action.index)
+      // Keep the sheet pointed at a real item: removing from inside it should
+      // slide on to the next line (how you rip through junk scan lines), and
+      // removing an earlier line shouldn't shift the sheet onto its neighbour.
+      let editingIndex = state.editingIndex
+      if (editingIndex != null) {
+        if (items.length === 0) editingIndex = null
+        else if (action.index < editingIndex) editingIndex -= 1
+        else if (action.index === editingIndex) editingIndex = Math.min(editingIndex, items.length - 1)
+      }
+      return { ...state, items, editingIndex }
+    }
+    case 'ADD_ITEM': {
+      const items = [...state.items, { item_number: null, ocr_name: null, item_name: '', quantity: 1, unit: 'ea', unit_price: null, total_price: null, category: 'Other', matchedItemId: null, prevAvgPrice: null }]
+      // A blank row is useless until it's named, so open it for editing at once.
+      return { ...state, items, editingIndex: items.length - 1, flaggedOnly: false }
+    }
     case 'SAVE_START':
       return { ...state, step: 'saving', saveError: null, isDuplicate: false }
     case 'SAVE_ERROR':
@@ -123,6 +151,12 @@ function reducer(state: State, action: Action): State {
       return { ...state, geminiKeyInput: action.value }
     case 'GEMINI_KEY_SET':
       return { ...state, geminiKeyMissing: false, geminiKeyInput: '' }
+    case 'OPEN_EDITOR':
+      return { ...state, editingIndex: action.index }
+    case 'CLOSE_EDITOR':
+      return { ...state, editingIndex: null }
+    case 'SET_FLAGGED_ONLY':
+      return { ...state, flaggedOnly: action.value }
     default:
       return state
   }
@@ -273,11 +307,15 @@ export default function NewReceiptPage() {
   const itemSum = state.items.reduce((s, i) => s + Number(i.total_price ?? i.unit_price ?? 0), 0)
   const taxAmt = parseFloat(state.taxAmount || '0') || 0
   const totalAmt = parseFloat(state.totalAmount || '0') || 0
-  const suspectCount = state.items.filter(i => {
-    if (i.unit_price == null || i.total_price == null) return false
-    const expected = Math.round(i.unit_price * i.quantity * 100) / 100
-    return Math.abs(i.total_price - expected) > 0.01
-  }).length
+  const suspectCount = state.items.filter(hasMathMismatch).length
+
+  // Indices in display order. The item currently open in the sheet stays in the
+  // list even once it stops matching the filter, so fixing a flagged line while
+  // filtered to flagged lines doesn't yank the sheet's position out from under it.
+  const visibleIndices = state.items
+    .map((_, i) => i)
+    .filter((i) => !state.flaggedOnly || hasMathMismatch(state.items[i]) || i === state.editingIndex)
+  const editingItem = state.editingIndex != null ? state.items[state.editingIndex] : null
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -415,6 +453,7 @@ export default function NewReceiptPage() {
                   min="0"
                   className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-full"
                   value={state.totalAmount}
+                  onFocus={selectAllOnFocus}
                   onChange={(e) => dispatch({ type: 'SET_TOTAL', total: e.target.value })}
                 />
               </div>
@@ -426,6 +465,7 @@ export default function NewReceiptPage() {
                   min="0"
                   className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-full"
                   value={state.taxAmount}
+                  onFocus={selectAllOnFocus}
                   onChange={(e) => dispatch({ type: 'SET_TAX', tax: e.target.value })}
                 />
               </div>
@@ -435,39 +475,54 @@ export default function NewReceiptPage() {
 
             {/* Line items */}
             <div>
-              <div className="flex items-center justify-between mb-2">
+              <div className="mb-2 flex items-center justify-between">
                 <h2 className="text-sm font-medium text-gray-700">Items ({state.items.length})</h2>
                 <button
                   onClick={() => dispatch({ type: 'ADD_ITEM' })}
-                  className="text-xs text-indigo-600 font-medium"
+                  className="rounded-full border border-indigo-200 px-3 py-1.5 text-xs font-semibold text-indigo-600 active:bg-indigo-50"
                 >
-                  + Add Item
+                  + Add item
                 </button>
               </div>
-              <div className="overflow-x-auto -mx-4 px-4">
-                <table className="w-full text-sm min-w-[620px]">
-                  <thead>
-                    <tr className="text-xs text-gray-400">
-                      <th className="text-left pb-1">Item</th>
-                      <th className="text-right pb-1 pr-2 w-16">Qty</th>
-                      <th className="text-right pb-1 pr-2 w-24">Unit $</th>
-                      <th className="text-right pb-1 pr-2 w-24">Total</th>
-                      <th className="text-left pb-1 pr-2 w-32">Category</th>
-                      <th className="w-10"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {state.items.map((item, i) => (
-                      <LineItemRow
-                        key={i}
-                        item={item}
-                        index={i}
-                        onChange={(idx, updates) => dispatch({ type: 'UPDATE_ITEM', index: idx, updates })}
-                        onRemove={(idx) => dispatch({ type: 'REMOVE_ITEM', index: idx })}
-                      />
-                    ))}
-                  </tbody>
-                </table>
+
+              {suspectCount > 0 && (
+                <div className="mb-2 flex gap-2">
+                  <button
+                    onClick={() => dispatch({ type: 'SET_FLAGGED_ONLY', value: false })}
+                    className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                      state.flaggedOnly ? 'bg-gray-100 text-gray-600' : 'bg-gray-900 text-white'
+                    }`}
+                  >
+                    All {state.items.length}
+                  </button>
+                  <button
+                    onClick={() => dispatch({ type: 'SET_FLAGGED_ONLY', value: true })}
+                    className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                      state.flaggedOnly ? 'bg-orange-600 text-white' : 'bg-orange-100 text-orange-700'
+                    }`}
+                  >
+                    ⚠ Needs review {suspectCount}
+                  </button>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                {visibleIndices.map((i) => (
+                  <ItemCard
+                    key={i}
+                    item={state.items[i]}
+                    index={i}
+                    onEdit={(idx) => dispatch({ type: 'OPEN_EDITOR', index: idx })}
+                    onRemove={(idx) => dispatch({ type: 'REMOVE_ITEM', index: idx })}
+                  />
+                ))}
+                {visibleIndices.length === 0 && (
+                  <p className="rounded-xl border border-dashed border-gray-200 px-4 py-6 text-center text-sm text-gray-400">
+                    {state.items.length === 0
+                      ? 'No items yet — add one below.'
+                      : 'Nothing left to review.'}
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -476,7 +531,7 @@ export default function NewReceiptPage() {
 
       {/* Bottom actions for review step */}
       {state.step === 'review' && (
-        <div className="fixed bottom-0 left-0 right-0 border-t border-gray-200 bg-white px-4 py-3 flex gap-3">
+        <div className="pb-safe fixed bottom-0 left-0 right-0 flex gap-3 border-t border-gray-200 bg-white px-4 py-3">
           <button
             onClick={() => navigate('/receipts')}
             className="flex-1 rounded-xl border border-gray-300 py-3 text-sm font-semibold text-gray-600"
@@ -490,6 +545,19 @@ export default function NewReceiptPage() {
             Confirm
           </button>
         </div>
+      )}
+
+      {/* Tap-to-edit sheet for a single line item */}
+      {state.step === 'review' && editingItem && state.editingIndex != null && (
+        <ItemEditSheet
+          item={editingItem}
+          index={state.editingIndex}
+          order={visibleIndices}
+          onChange={(idx, updates) => dispatch({ type: 'UPDATE_ITEM', index: idx, updates })}
+          onRemove={(idx) => dispatch({ type: 'REMOVE_ITEM', index: idx })}
+          onNavigate={(idx) => dispatch({ type: 'OPEN_EDITOR', index: idx })}
+          onClose={() => dispatch({ type: 'CLOSE_EDITOR' })}
+        />
       )}
 
       {/* Saving overlay */}
