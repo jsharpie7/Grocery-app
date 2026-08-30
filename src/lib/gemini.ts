@@ -251,6 +251,7 @@ function deduplicateItems(items: ExtractedLineItem[]): ExtractedLineItem[] {
 
 export interface ScanDiagnostics {
   buildId: string
+  warning: string | null
   sourceBytes: number
   sourceDimensions: string | null
   sentBytes: number | null
@@ -293,6 +294,7 @@ export function formatDiagnostics(d: ScanDiagnostics): string[] {
     `model: ${d.modelVersion ?? d.model}`,
     `build: ${d.buildId}`,
   ]
+  if (d.warning) lines.push(`warning: ${d.warning}`)
   if (d.finishReason) lines.push(`finish: ${d.finishReason}`)
   if (d.promptTokens != null || d.outputTokens != null || d.thoughtTokens != null) {
     lines.push(`tokens in/out/thinking: ${d.promptTokens ?? '?'} / ${d.outputTokens ?? '?'} / ${d.thoughtTokens ?? 0}`)
@@ -302,15 +304,32 @@ export function formatDiagnostics(d: ScanDiagnostics): string[] {
   return lines
 }
 
-// Floating aliases get re-pointed by Google without notice, which can change both latency and
-// whether thinking is actually disablable. Keep the choice in one place, allow an override
-// without a code change, and always record which version answered.
-const GEMINI_MODEL = import.meta.env.VITE_GEMINI_MODEL || 'gemini-2.5-flash'
+// Receipt extraction is OCR plus bookkeeping — it wants speed and exact structure, not
+// reasoning. Google's thinking docs list flash-lite as the one family with thinking OFF by
+// default, which is what we want, and it stays on the free tier.
+//
+// This used to be pinned to gemini-2.5-flash with `thinkingConfig: { thinkingBudget: 0 }`.
+// That parameter no longer appears in the API docs at all — the current control is
+// thinkingLevel — and an unknown key in generationConfig is ignored rather than rejected.
+// So the request silently stopped disabling anything and 2.5-flash (thinking ON by default)
+// began thinking its way through every receipt. That is the shape of a failure that appears
+// with no change on our side.
+export const MODEL_CHOICES = [
+  { id: 'gemini-2.5-flash-lite', label: 'Flash-Lite 2.5 — fastest, thinking off (default)' },
+  { id: 'gemini-3.5-flash-lite', label: 'Flash-Lite 3.5 — newer, still fast' },
+  { id: 'gemini-3.6-flash', label: 'Flash 3.6 — slower, better at messy photos' },
+  { id: 'gemini-2.5-flash', label: 'Flash 2.5 — previous default' },
+] as const
+
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash-lite'
 
 // A 60-item receipt consolidates to roughly 3k output tokens. The model's own default cap is
 // ~65k, so without this a single repetition loop generates for minutes and the only thing the
 // user ever sees is the request timeout. Capping it converts that into a fast, named failure.
 const MAX_OUTPUT_TOKENS = 8192
+
+// Below this the source photo cannot carry legible receipt text (see the check that uses it).
+const MIN_USEFUL_WIDTH = 1000
 
 // Deliberately left at 45s. The previous round raised this from 20s and it did not help — a
 // timeout is the symptom, not the cause. With a legible image and a bounded output, a scan that
@@ -334,10 +353,13 @@ interface GeminiResponse {
 export async function extractReceiptFromImage(
   file: File,
   apiKey: string,
+  model: string = DEFAULT_GEMINI_MODEL,
 ): Promise<ExtractedReceiptData> {
+  const GEMINI_MODEL = model || DEFAULT_GEMINI_MODEL
   const startedAt = performance.now()
   const diag: ScanDiagnostics = {
     buildId: __BUILD_ID__,
+    warning: null,
     sourceBytes: file.size,
     sourceDimensions: null,
     sentBytes: null,
@@ -387,6 +409,13 @@ export async function extractReceiptFromImage(
   if (payload.width && payload.height) {
     diag.sentDimensions = `${payload.width}x${payload.height}`
   }
+  // A receipt line is ~40 characters wide and the receipt rarely fills the frame, so below
+  // roughly this width the text is a handful of pixels per character — unreadable no matter
+  // which model reads it. Worth naming, because the visible symptom is a slow timeout rather
+  // than anything that looks like an image problem.
+  if (payload.width && payload.width < MIN_USEFUL_WIDTH) {
+    diag.warning = `photo is only ${payload.width}px wide — too low-resolution to read reliably; retake with the camera`
+  }
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
@@ -415,7 +444,6 @@ export async function extractReceiptFromImage(
               responseMimeType: 'application/json',
               temperature: 0.1,
               maxOutputTokens: MAX_OUTPUT_TOKENS,
-              thinkingConfig: { thinkingBudget: 0 },
             },
           }),
         },
@@ -424,7 +452,9 @@ export async function extractReceiptFromImage(
       markRequest()
       if ((err as Error).name === 'AbortError') {
         throw fail(
-          `Gemini scan timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds. Tap Retry — if it keeps happening, open Scan details below.`,
+          diag.warning
+            ? `Gemini scan timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds. The photo is only ${payload.width}px wide, which is likely too small to read — retake it with the Camera button rather than picking a shared or saved copy.`
+            : `Gemini scan timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds. Tap Retry — if it keeps happening, open Scan details below.`,
         )
       }
       throw fail(`Could not reach Gemini: ${(err as Error).message}`)

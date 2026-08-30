@@ -134,7 +134,7 @@ export default function NewReceiptPage() {
   const [state, dispatch] = useReducer(reducer, initial)
   const { createReceipt, resolveStoreId, resolveAliasesForReview } = useReceipts()
   const { createStore } = useStores()
-  const { geminiKey, setGeminiKey } = useHouseholdStore()
+  const { geminiKey, geminiModel, setGeminiKey } = useHouseholdStore()
 
   function handleFileSelect(file: File) {
     const preview = URL.createObjectURL(file)
@@ -150,7 +150,7 @@ export default function NewReceiptPage() {
     }
     dispatch({ type: 'EXTRACT_START' })
     try {
-      const data = await extractReceiptFromImage(file, key)
+      const data = await extractReceiptFromImage(file, key, geminiModel)
 
       // Auto-match store
       const stores = useHouseholdStore.getState().stores
