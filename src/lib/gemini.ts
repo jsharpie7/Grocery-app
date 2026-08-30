@@ -94,8 +94,11 @@ async function downscaleImage(file: File): Promise<ImagePayload> {
   const sourceHeight = bitmap.height
   const scale = computeScale(sourceWidth, sourceHeight)
 
-  if (scale === 1 && file.type === 'image/jpeg') {
-    // Already small enough and already a JPEG — skip re-encoding (and keep its EXIF intact).
+  if (scale === 1) {
+    // No resize needed, so there is nothing to gain by re-encoding — send the original bytes
+    // whatever the format. Gemini reads PNG directly, and app-generated receipts arrive as
+    // crisp grayscale PNG: converting those to JPEG tripled the payload and added ringing
+    // around the very text we need read. Skipping the canvas also preserves EXIF.
     bitmap.close()
     const payload = await fileToBase64(file)
     return { ...payload, sourceWidth, sourceHeight, width: sourceWidth, height: sourceHeight }
@@ -251,7 +254,7 @@ function deduplicateItems(items: ExtractedLineItem[]): ExtractedLineItem[] {
 
 export interface ScanDiagnostics {
   buildId: string
-  warning: string | null
+  sourceType: string
   sourceBytes: number
   sourceDimensions: string | null
   sentBytes: number | null
@@ -288,13 +291,12 @@ function formatBytes(bytes: number | null): string {
 // phone screen (or pasted into a bug report) without a debugger attached.
 export function formatDiagnostics(d: ScanDiagnostics): string[] {
   const lines = [
-    `photo: ${d.sourceDimensions ?? '?'} (${formatBytes(d.sourceBytes)})`,
+    `photo: ${d.sourceDimensions ?? '?'} ${d.sourceType} (${formatBytes(d.sourceBytes)})`,
     `sent: ${d.sentDimensions ?? '?'} (${formatBytes(d.sentBytes)})`,
     `prepare: ${(d.prepareMs / 1000).toFixed(1)}s · request: ${(d.requestMs / 1000).toFixed(1)}s · total: ${(d.totalMs / 1000).toFixed(1)}s`,
     `model: ${d.modelVersion ?? d.model}`,
     `build: ${d.buildId}`,
   ]
-  if (d.warning) lines.push(`warning: ${d.warning}`)
   if (d.finishReason) lines.push(`finish: ${d.finishReason}`)
   if (d.promptTokens != null || d.outputTokens != null || d.thoughtTokens != null) {
     lines.push(`tokens in/out/thinking: ${d.promptTokens ?? '?'} / ${d.outputTokens ?? '?'} / ${d.thoughtTokens ?? 0}`)
@@ -328,8 +330,6 @@ export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash-lite'
 // user ever sees is the request timeout. Capping it converts that into a fast, named failure.
 const MAX_OUTPUT_TOKENS = 8192
 
-// Below this the source photo cannot carry legible receipt text (see the check that uses it).
-const MIN_USEFUL_WIDTH = 1000
 
 // Deliberately left at 45s. The previous round raised this from 20s and it did not help — a
 // timeout is the symptom, not the cause. With a legible image and a bounded output, a scan that
@@ -359,7 +359,7 @@ export async function extractReceiptFromImage(
   const startedAt = performance.now()
   const diag: ScanDiagnostics = {
     buildId: __BUILD_ID__,
-    warning: null,
+    sourceType: file.type || 'unknown',
     sourceBytes: file.size,
     sourceDimensions: null,
     sentBytes: null,
@@ -409,13 +409,6 @@ export async function extractReceiptFromImage(
   if (payload.width && payload.height) {
     diag.sentDimensions = `${payload.width}x${payload.height}`
   }
-  // A receipt line is ~40 characters wide and the receipt rarely fills the frame, so below
-  // roughly this width the text is a handful of pixels per character — unreadable no matter
-  // which model reads it. Worth naming, because the visible symptom is a slow timeout rather
-  // than anything that looks like an image problem.
-  if (payload.width && payload.width < MIN_USEFUL_WIDTH) {
-    diag.warning = `photo is only ${payload.width}px wide — too low-resolution to read reliably; retake with the camera`
-  }
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
@@ -452,9 +445,7 @@ export async function extractReceiptFromImage(
       markRequest()
       if ((err as Error).name === 'AbortError') {
         throw fail(
-          diag.warning
-            ? `Gemini scan timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds. The photo is only ${payload.width}px wide, which is likely too small to read — retake it with the Camera button rather than picking a shared or saved copy.`
-            : `Gemini scan timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds. Tap Retry — if it keeps happening, open Scan details below.`,
+          `Gemini scan timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds. Tap Retry — if it keeps happening, open Scan details below.`,
         )
       }
       throw fail(`Could not reach Gemini: ${(err as Error).message}`)
