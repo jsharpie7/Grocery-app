@@ -38,3 +38,12 @@ describe('computeScale', () => {
     expect(computeScale(0, 0)).toBe(1)
   })
 })
+
+describe('computeScale — app-download receipts', () => {
+  it('leaves a Walmart app receipt download untouched', () => {
+    // 554x806 grayscale PNG, ~12px glyph height: small in pixels but perfectly crisp.
+    // It must not be resized, and (see downscaleImage) must not be re-encoded to JPEG either,
+    // which previously tripled it to 118 KB and smeared the text.
+    expect(computeScale(554, 806)).toBe(1)
+  })
+})
