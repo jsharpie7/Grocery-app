@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Tab bar height, in one place: the bar sets itself to this, and every
+     tab-root screen reserves the same amount of bottom clearance because the
+     bar is fixed and content scrolls beneath it. 56px holds a 20px icon over
+     an 11px/1.6 label with 9px of breathing room top and bottom; the inset is
+     the home indicator, whose 17px fallback reproduces the design's flat 26px
+     bottom padding on devices that report no safe area. */
+  --tab-bar-h: calc(56px + env(safe-area-inset-bottom, 17px));
+}
+
 @layer base {
   html {
     -webkit-tap-highlight-color: transparent;

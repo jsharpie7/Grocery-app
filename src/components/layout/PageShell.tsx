@@ -1,18 +1,32 @@
 interface PageShellProps {
   title: string
   children: React.ReactNode
+  /** Rendered on the title's baseline, right-aligned. */
   action?: React.ReactNode
 }
 
+/**
+ * Chrome for a tab-root screen.
+ *
+ * The redesign has no navigation bar on these screens — the screen's name is a
+ * large title that scrolls away with the content, iOS-style — so this is a
+ * scroll container and a heading, nothing more.
+ *
+ * Horizontal padding is deliberately not imposed on `children`: the dashboard
+ * pads its whole body, while Receipts runs its month cards to their own
+ * margins under unpadded month headers. Each screen pads itself.
+ */
 export default function PageShell({ title, children, action }: PageShellProps) {
   return (
-    <div className="flex h-full flex-col overflow-hidden">
-      <header className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-3">
-        <h1 className="text-lg font-semibold text-gray-900">{title}</h1>
-        {action}
-      </header>
-      <main className="flex-1 overflow-y-auto pb-20">
+    <div className="flex h-full flex-col overflow-hidden bg-canvas">
+      <main className="flex-1 overflow-y-auto">
+        <div className="flex items-baseline justify-between px-4 pb-3.5 pt-1.5">
+          <h1 className="text-title-lg">{title}</h1>
+          {action}
+        </div>
         {children}
+        {/* Clearance for the fixed tab bar the content scrolls beneath. */}
+        <div aria-hidden style={{ height: 'var(--tab-bar-h)' }} />
       </main>
     </div>
   )
