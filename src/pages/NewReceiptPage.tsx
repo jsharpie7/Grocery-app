@@ -2,17 +2,31 @@ import { useReducer, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { extractReceiptFromImage, getLastScanDiagnostics, type ScanDiagnostics, type ScanError } from '../lib/gemini'
 import { normalizeStoreName } from '../lib/itemMatcher'
-import { useReceipts, type PendingLineItem } from '../hooks/useReceipts'
+import { useReceipts } from '../hooks/useReceipts'
 import { useStores } from '../hooks/useStores'
 import { useHouseholdStore } from '../store/householdStore'
+import {
+  editCategory,
+  editName,
+  editQty,
+  editTotal,
+  editUnitPrice,
+  emptyReviewItem,
+  parseField,
+  toPendingItems,
+  toReviewItems,
+  type ReviewItem,
+} from '../lib/reviewItems'
+import { flaggedLabel, nextFlaggedIndex, reconcile, type ReviewFlag } from '../lib/reviewFlags'
+import { shortDate } from '../lib/dates'
 import StorePicker from '../components/receipts/StorePicker'
-import LineItemRow from '../components/receipts/LineItemRow'
-import TotalMismatchWarning from '../components/receipts/TotalMismatchWarning'
+import StoreBadge from '../components/ui/StoreBadge'
+import ReviewItemCard from '../components/receipts/ReviewItemCard'
 import ErrorBanner from '../components/ui/ErrorBanner'
 import Spinner from '../components/ui/Spinner'
 import ScanDetails from '../components/receipts/ScanDetails'
 
-type Step = 'capture' | 'extracting' | 'review' | 'saving' | 'done'
+type Step = 'capture' | 'extracting' | 'review' | 'saving'
 
 interface State {
   step: Step
@@ -26,9 +40,9 @@ interface State {
   receiptDate: string
   totalAmount: string
   taxAmount: string
-  items: PendingLineItem[]
-  imageUploadFailed: boolean
-  geminiKeyMissing: boolean
+  items: ReviewItem[]
+  /** Index of the one open row. The design allows exactly one at a time. */
+  expanded: number | null
   geminiKeyInput: string
   scanDiagnostics: ScanDiagnostics | null
 }
@@ -36,19 +50,20 @@ interface State {
 type Action =
   | { type: 'SET_FILE'; file: File; preview: string }
   | { type: 'EXTRACT_START' }
-  | { type: 'EXTRACT_SUCCESS'; storeName: string; receiptDate: string; totalAmount: string; taxAmount: string; items: PendingLineItem[] }
+  | { type: 'EXTRACT_SUCCESS'; storeName: string; receiptDate: string; totalAmount: string; taxAmount: string; items: ReviewItem[] }
   | { type: 'EXTRACT_ERROR'; error: string; diagnostics: ScanDiagnostics | null }
   | { type: 'RETRY_EXTRACT' }
   | { type: 'SET_STORE'; storeId: string | null; storeName: string }
   | { type: 'SET_DATE'; date: string }
   | { type: 'SET_TOTAL'; total: string }
   | { type: 'SET_TAX'; tax: string }
-  | { type: 'UPDATE_ITEM'; index: number; updates: Partial<PendingLineItem> }
+  | { type: 'TOGGLE_ROW'; index: number }
+  | { type: 'EXPAND_ROW'; index: number | null }
+  | { type: 'EDIT_ITEM'; index: number; apply: (item: ReviewItem) => ReviewItem }
   | { type: 'REMOVE_ITEM'; index: number }
-  | { type: 'ADD_ITEM' }
+  | { type: 'ADD_ITEM'; category: string }
   | { type: 'SAVE_START' }
   | { type: 'SAVE_ERROR'; error: string; isDuplicate?: boolean }
-  | { type: 'SAVE_SUCCESS'; imageUploadFailed: boolean }
   | { type: 'FORCE_SAVE' }
   | { type: 'SET_GEMINI_KEY_INPUT'; value: string }
   | { type: 'GEMINI_KEY_SET' }
@@ -70,8 +85,7 @@ const initial: State = {
   totalAmount: '',
   taxAmount: '',
   items: [],
-  imageUploadFailed: false,
-  geminiKeyMissing: false,
+  expanded: null,
   geminiKeyInput: '',
   scanDiagnostics: null,
 }
@@ -82,17 +96,23 @@ function reducer(state: State, action: Action): State {
       return { ...state, imageFile: action.file, imagePreview: action.preview }
     case 'EXTRACT_START':
       return { ...state, step: 'extracting', extractError: null, scanDiagnostics: null }
-    case 'EXTRACT_SUCCESS':
+    case 'EXTRACT_SUCCESS': {
+      // Land on the first thing needing attention rather than at the top of a
+      // list the user would otherwise have to scan themselves.
+      const firstFlagged = action.items.findIndex((it) => it.flag)
       return {
-        ...state, step: 'review',
+        ...state,
+        step: 'review',
         storeName: action.storeName,
         receiptDate: action.receiptDate || today(),
         totalAmount: action.totalAmount,
         taxAmount: action.taxAmount,
         items: action.items,
+        expanded: firstFlagged < 0 ? null : firstFlagged,
         extractError: null,
         scanDiagnostics: null,
       }
+    }
     case 'EXTRACT_ERROR':
       return { ...state, step: 'capture', extractError: action.error, scanDiagnostics: action.diagnostics }
     case 'RETRY_EXTRACT':
@@ -105,28 +125,44 @@ function reducer(state: State, action: Action): State {
       return { ...state, totalAmount: action.total }
     case 'SET_TAX':
       return { ...state, taxAmount: action.tax }
-    case 'UPDATE_ITEM':
-      return { ...state, items: state.items.map((it, i) => i === action.index ? { ...it, ...action.updates } : it) }
+    case 'TOGGLE_ROW':
+      return { ...state, expanded: state.expanded === action.index ? null : action.index }
+    case 'EXPAND_ROW':
+      return { ...state, expanded: action.index }
+    case 'EDIT_ITEM':
+      return {
+        ...state,
+        items: state.items.map((it, i) => (i === action.index ? action.apply(it) : it)),
+      }
     case 'REMOVE_ITEM':
-      return { ...state, items: state.items.filter((_, i) => i !== action.index) }
+      return {
+        ...state,
+        items: state.items.filter((_, i) => i !== action.index),
+        expanded: null,
+      }
     case 'ADD_ITEM':
-      return { ...state, items: [...state.items, { item_number: null, ocr_name: null, item_name: '', quantity: 1, unit: 'ea', unit_price: null, total_price: null, category: 'Other', matchedItemId: null, prevAvgPrice: null }] }
+      // Opens immediately: an empty row is only useful once you can type in it.
+      return {
+        ...state,
+        items: [...state.items, emptyReviewItem(action.category)],
+        expanded: state.items.length,
+      }
     case 'SAVE_START':
       return { ...state, step: 'saving', saveError: null, isDuplicate: false }
     case 'SAVE_ERROR':
       return { ...state, step: 'review', saveError: action.error, isDuplicate: !!action.isDuplicate }
-    case 'SAVE_SUCCESS':
-      return { ...state, step: 'done', imageUploadFailed: action.imageUploadFailed }
     case 'FORCE_SAVE':
       return { ...state, isDuplicate: false, saveError: null }
     case 'SET_GEMINI_KEY_INPUT':
       return { ...state, geminiKeyInput: action.value }
     case 'GEMINI_KEY_SET':
-      return { ...state, geminiKeyMissing: false, geminiKeyInput: '' }
+      return { ...state, geminiKeyInput: '' }
     default:
       return state
   }
 }
+
+const money = (n: number) => `$${n.toFixed(2)}`
 
 export default function NewReceiptPage() {
   const navigate = useNavigate()
@@ -134,7 +170,7 @@ export default function NewReceiptPage() {
   const [state, dispatch] = useReducer(reducer, initial)
   const { createReceipt, resolveStoreId, resolveAliasesForReview } = useReceipts()
   const { createStore } = useStores()
-  const { geminiKey, geminiModel, setGeminiKey } = useHouseholdStore()
+  const { geminiKey, geminiModel, setGeminiKey, categories, flagLowConfidence, stores } = useHouseholdStore()
 
   function handleFileSelect(file: File) {
     const preview = URL.createObjectURL(file)
@@ -176,7 +212,7 @@ export default function NewReceiptPage() {
         receiptDate: parsedDate,
         totalAmount: data.total_amount != null ? String(data.total_amount) : '',
         taxAmount: data.tax_amount != null ? String(data.tax_amount) : '',
-        items: pendingItems,
+        items: toReviewItems(pendingItems),
       })
 
       if (matchedStoreId) {
@@ -198,7 +234,6 @@ export default function NewReceiptPage() {
       return
     }
 
-    // Client-side duplicate check
     if (!force && state.isDuplicate) return
 
     const total = parseFloat(state.totalAmount)
@@ -221,12 +256,16 @@ export default function NewReceiptPage() {
         receiptDate: state.receiptDate,
         totalAmount: total,
         taxAmount: isNaN(tax) ? 0 : tax,
-        items: state.items.filter((i) => i.item_name.trim()),
+        items: toPendingItems(state.items).filter((i) => i.item_name.trim()),
         imageFile: state.imageFile,
       })
 
-      dispatch({ type: 'SAVE_SUCCESS', imageUploadFailed })
-      setTimeout(() => navigate('/receipts'), 1500)
+      // The design confirms with a toast on the Receipts tab rather than a
+      // success screen, so the save ends by landing there.
+      navigate('/receipts', {
+        replace: true,
+        state: { savedTotal: money(total), imageUploadFailed },
+      })
     } catch (e) {
       const err = e as Error & { code?: string; isDuplicate?: boolean }
       const isDup = err.isDuplicate || err.code === '23505'
@@ -246,258 +285,277 @@ export default function NewReceiptPage() {
     if (state.imageFile) startExtract(state.imageFile)
   }
 
-  // ─── RENDER ──────────────────────────────────────────────────────────────
+  // ─── DERIVED ─────────────────────────────────────────────────────────────
+  // Recomputed every render, never stored: the reconciliation verdict moves on
+  // every keystroke, and a stored copy would be one keystroke behind.
 
-  if (state.step === 'done') {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-center p-8">
-        <div className="text-6xl mb-4">✅</div>
-        <div className="text-xl font-semibold text-gray-800 mb-1">Receipt Saved!</div>
-        {state.imageUploadFailed && (
-          <p className="text-sm text-yellow-600 mt-2">Image upload failed — receipt saved without photo.</p>
-        )}
-      </div>
-    )
-  }
+  // Unresolved stores (free text straight off the scan) get a neutral badge
+  // rather than a made-up brand colour.
+  const selectedStore = stores.find((s) => s.id === state.storeId)
+  const flags: ReviewFlag[] = state.items.map((it) => (flagLowConfidence ? it.flag : null))
+  const flaggedCount = flags.filter(Boolean).length
+  const { itemSum, balanced, delta } = reconcile(
+    state.items.map((it) => parseField(it.total)),
+    parseField(state.taxAmount) ?? 0,
+    parseField(state.totalAmount),
+  )
+
+  // ─── RENDER ──────────────────────────────────────────────────────────────
 
   if (state.step === 'extracting') {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4">
+      <div className="flex h-full flex-col items-center justify-center gap-4">
         <Spinner size="lg" />
-        <p className="text-gray-600 text-sm">Scanning with Gemini…</p>
-        <p className="text-gray-400 text-xs">Large receipts can take up to 45 seconds</p>
+        <p className="text-sm text-ink-2">Scanning with Gemini…</p>
+        <p className="text-xs text-ink-3">Large receipts can take up to 45 seconds</p>
       </div>
     )
   }
 
-  const itemSum = state.items.reduce((s, i) => s + Number(i.total_price ?? i.unit_price ?? 0), 0)
-  const taxAmt = parseFloat(state.taxAmount || '0') || 0
-  const totalAmt = parseFloat(state.totalAmount || '0') || 0
-  const suspectCount = state.items.filter(i => {
-    if (i.unit_price == null || i.total_price == null) return false
-    const expected = Math.round(i.unit_price * i.quantity * 100) / 100
-    return Math.abs(i.total_price - expected) > 0.01
-  }).length
+  if (state.step === 'capture') {
+    return (
+      <div className="flex h-full flex-col overflow-hidden bg-canvas">
+        <header className="flex items-center gap-3 border-b border-border bg-surface px-4 pb-3 pt-2">
+          <button onClick={() => navigate('/receipts')} className="text-nav text-accent">
+            Cancel
+          </button>
+          <h1 className="flex-1 text-nav font-semibold">New receipt</h1>
+        </header>
+
+        <div className="flex-1 space-y-4 overflow-y-auto p-4">
+          <ErrorBanner message={state.extractError} onDismiss={() => dispatch({ type: 'RETRY_EXTRACT' })} />
+          {state.extractError && <ScanDetails diagnostics={state.scanDiagnostics} />}
+
+          {!geminiKey.trim() && (
+            <div className="rounded-card border border-warn/40 bg-warn-bg p-4">
+              <p className="mb-2 text-sm font-medium text-warn-ink">Gemini API key required</p>
+              <p className="mb-3 text-xs text-ink-2">
+                Get a free key at <span className="font-medium">aistudio.google.com/app/apikey</span>
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="AIza..."
+                  value={state.geminiKeyInput}
+                  onChange={(e) => dispatch({ type: 'SET_GEMINI_KEY_INPUT', value: e.target.value })}
+                  className="flex-1 rounded-input border border-border px-3 py-2"
+                />
+                <button
+                  onClick={saveGeminiKey}
+                  disabled={!state.geminiKeyInput.trim()}
+                  className="rounded-input bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          )}
+
+          {state.imagePreview && (
+            <div className="relative">
+              <img src={state.imagePreview} alt="Receipt preview" className="max-h-48 w-full rounded-card object-contain" />
+              {state.imageFile && state.extractError && (
+                <button
+                  onClick={() => startExtract(state.imageFile!)}
+                  className="absolute inset-0 flex items-center justify-center gap-2 rounded-card bg-black/40 text-sm font-semibold text-white"
+                >
+                  <span>↺</span> Retry scan
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <button
+              onClick={() => { fileInputRef.current!.accept = 'image/*'; fileInputRef.current!.capture = 'environment'; fileInputRef.current!.click() }}
+              className="flex flex-col items-center justify-center gap-2 rounded-card border-2 border-dashed border-accent/40 p-8 text-accent"
+            >
+              <span className="text-3xl">📷</span>
+              <span className="text-sm font-medium">Camera</span>
+            </button>
+            <button
+              onClick={() => { fileInputRef.current!.removeAttribute('capture'); fileInputRef.current!.accept = 'image/*'; fileInputRef.current!.click() }}
+              className="flex flex-col items-center justify-center gap-2 rounded-card border-2 border-dashed border-border-strong p-8 text-ink-2"
+            >
+              <span className="text-3xl">🖼️</span>
+              <span className="text-sm font-medium">Gallery</span>
+            </button>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f) }}
+          />
+        </div>
+      </div>
+    )
+  }
+
+  // ─── REVIEW ──────────────────────────────────────────────────────────────
+  // Three fixed regions: nav bar, scrolling body, footer. Only the body
+  // scrolls, and only vertically.
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Header */}
-      <header className="flex items-center gap-3 border-b border-gray-200 bg-white px-4 py-3">
-        <button onClick={() => navigate('/receipts')} className="text-gray-500 hover:text-gray-700 text-lg">
-          ←
+    <div className="flex h-full flex-col overflow-hidden bg-canvas">
+      <div className="flex flex-none items-center justify-between border-b border-border bg-surface px-4 pb-3 pt-2">
+        <button onClick={() => navigate('/receipts')} className="text-nav text-accent">
+          Cancel
         </button>
-        <h1 className="text-lg font-semibold text-gray-900 flex-1">
-          {state.step === 'capture' ? 'Upload Receipt' : 'Review Receipt'}
-        </h1>
-      </header>
-
-      <div className="flex-1 overflow-y-auto pb-32">
-        {/* Capture step */}
-        {state.step === 'capture' && (
-          <div className="p-4 space-y-4">
-            <ErrorBanner message={state.extractError} onDismiss={() => dispatch({ type: 'RETRY_EXTRACT' })} />
-            {state.extractError && <ScanDetails diagnostics={state.scanDiagnostics} />}
-
-            {/* Gemini key entry inline if missing */}
-            {!geminiKey.trim() && (
-              <div className="rounded-xl border border-yellow-200 bg-yellow-50 p-4">
-                <p className="text-sm font-medium text-yellow-800 mb-2">Gemini API Key Required</p>
-                <p className="text-xs text-yellow-700 mb-3">
-                  Get a free key at <span className="font-medium">aistudio.google.com/app/apikey</span>
-                </p>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="AIza..."
-                    value={state.geminiKeyInput}
-                    onChange={(e) => dispatch({ type: 'SET_GEMINI_KEY_INPUT', value: e.target.value })}
-                    className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                  />
-                  <button
-                    onClick={saveGeminiKey}
-                    disabled={!state.geminiKeyInput.trim()}
-                    className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                  >
-                    Save
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {state.imagePreview && (
-              <div className="relative">
-                <img src={state.imagePreview} alt="Receipt preview" className="w-full rounded-xl object-contain max-h-48" />
-                {state.imageFile && state.extractError && (
-                  <button
-                    onClick={() => startExtract(state.imageFile!)}
-                    className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/40 text-white font-semibold text-sm gap-2"
-                  >
-                    <span>↺</span> Retry Scan
-                  </button>
-                )}
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-4">
-              <button
-                onClick={() => { fileInputRef.current!.accept = 'image/*'; fileInputRef.current!.capture = 'environment'; fileInputRef.current!.click() }}
-                className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-indigo-300 p-8 text-indigo-600 hover:bg-indigo-50"
-              >
-                <span className="text-3xl">📷</span>
-                <span className="text-sm font-medium">Camera</span>
-              </button>
-              <button
-                onClick={() => { fileInputRef.current!.removeAttribute('capture'); fileInputRef.current!.accept = 'image/*'; fileInputRef.current!.click() }}
-                className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-gray-300 p-8 text-gray-600 hover:bg-gray-50"
-              >
-                <span className="text-3xl">🖼️</span>
-                <span className="text-sm font-medium">Gallery</span>
-              </button>
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f) }}
-            />
-          </div>
-        )}
-
-        {/* Review step */}
-        {state.step === 'review' && (
-          <div className="p-4 space-y-5">
-            <ErrorBanner message={state.saveError} onDismiss={() => dispatch({ type: 'SAVE_ERROR', error: '' })} />
-
-            {state.isDuplicate && (
-              <div className="rounded-lg bg-yellow-50 border border-yellow-200 px-4 py-3 text-sm text-yellow-800">
-                <p className="font-medium mb-1">Possible duplicate receipt</p>
-                <p className="mb-3">A receipt with this date and total may already exist.</p>
-                <button
-                  onClick={() => handleSave(true)}
-                  className="rounded-lg bg-yellow-600 px-4 py-1.5 text-sm font-medium text-white"
-                >
-                  Save Anyway
-                </button>
-              </div>
-            )}
-
-            {state.imagePreview && (
-              <img src={state.imagePreview} alt="Receipt" className="w-full max-h-32 rounded-xl object-contain" />
-            )}
-
-            <StorePicker
-              storeId={state.storeId}
-              storeName={state.storeName}
-              onChange={(id, name) => dispatch({ type: 'SET_STORE', storeId: id, storeName: name })}
-              onCreateStore={async (name) => {
-                const store = await createStore(name, '#6366f1')
-                return store
-              }}
-            />
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
-              <input
-                type="date"
-                className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-full"
-                value={state.receiptDate}
-                onChange={(e) => dispatch({ type: 'SET_DATE', date: e.target.value })}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Receipt Total ($)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-full"
-                  value={state.totalAmount}
-                  onChange={(e) => dispatch({ type: 'SET_TOTAL', total: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Tax / Fees ($)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm w-full"
-                  value={state.taxAmount}
-                  onChange={(e) => dispatch({ type: 'SET_TAX', tax: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <TotalMismatchWarning itemSum={itemSum} taxAmount={taxAmt} totalAmount={totalAmt} suspectCount={suspectCount} />
-
-            {/* Line items */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-sm font-medium text-gray-700">Items ({state.items.length})</h2>
-                <button
-                  onClick={() => dispatch({ type: 'ADD_ITEM' })}
-                  className="text-xs text-indigo-600 font-medium"
-                >
-                  + Add Item
-                </button>
-              </div>
-              <div className="overflow-x-auto -mx-4 px-4">
-                <table className="w-full text-sm min-w-[620px]">
-                  <thead>
-                    <tr className="text-xs text-gray-400">
-                      <th className="text-left pb-1">Item</th>
-                      <th className="text-right pb-1 pr-2 w-16">Qty</th>
-                      <th className="text-right pb-1 pr-2 w-24">Unit $</th>
-                      <th className="text-right pb-1 pr-2 w-24">Total</th>
-                      <th className="text-left pb-1 pr-2 w-32">Category</th>
-                      <th className="w-10"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {state.items.map((item, i) => (
-                      <LineItemRow
-                        key={i}
-                        item={item}
-                        index={i}
-                        onChange={(idx, updates) => dispatch({ type: 'UPDATE_ITEM', index: idx, updates })}
-                        onRemove={(idx) => dispatch({ type: 'REMOVE_ITEM', index: idx })}
-                      />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
+        <span className="text-nav font-semibold">Review</span>
+        <button onClick={() => handleSave(false)} className="text-nav font-semibold text-accent">
+          Save
+        </button>
       </div>
 
-      {/* Bottom actions for review step */}
-      {state.step === 'review' && (
-        <div className="fixed bottom-0 left-0 right-0 border-t border-gray-200 bg-white px-4 py-3 flex gap-3">
-          <button
-            onClick={() => navigate('/receipts')}
-            className="flex-1 rounded-xl border border-gray-300 py-3 text-sm font-semibold text-gray-600"
+      <div className="flex-1 overflow-y-auto px-4 pb-5 pt-3.5">
+        <ErrorBanner message={state.saveError} onDismiss={() => dispatch({ type: 'SAVE_ERROR', error: '' })} />
+
+        {state.isDuplicate && (
+          <div className="mb-3.5 rounded-card border border-warn/40 bg-warn-bg px-4 py-3 text-sm text-warn-ink">
+            <p className="mb-1 font-medium">Possible duplicate receipt</p>
+            <p className="mb-3">A receipt with this date and total may already exist.</p>
+            <button onClick={() => handleSave(true)} className="rounded-input bg-warn px-4 py-1.5 text-sm font-medium text-white">
+              Save anyway
+            </button>
+          </div>
+        )}
+
+        {/* Summary: the photo, what it is, and whether the numbers close. */}
+        <div className="flex items-center gap-3.5 rounded-card bg-surface px-4 py-3.5">
+          {state.imagePreview ? (
+            <img
+              src={state.imagePreview}
+              alt="Receipt"
+              className="h-[68px] w-[52px] flex-none rounded-lg border border-hairline object-cover"
+            />
+          ) : (
+            <div className="h-[68px] w-[52px] flex-none rounded-lg border border-hairline bg-canvas" />
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <StoreBadge
+                name={state.storeName || '?'}
+                color={selectedStore?.color ?? '#8A8A8E'}
+                className="h-[22px] w-[22px] text-[9px]"
+              />
+              <span className="truncate text-nav font-semibold">{state.storeName || 'Unknown store'}</span>
+              <span className="flex-none text-meta text-ink-2">· {shortDate(state.receiptDate)}</span>
+            </div>
+            <p className="mt-1.5 text-meta text-ink-2">
+              Items {money(itemSum)} + tax {money(parseField(state.taxAmount) ?? 0)}
+            </p>
+            {/* Stated in place and quietly, resolving to green as lines are
+                corrected — no alert box to dismiss. */}
+            <p className={`text-meta font-semibold ${balanced === false ? 'text-warn-ink' : 'text-accent'}`}>
+              {balanced == null
+                ? 'Enter the receipt total to check'
+                : balanced
+                  ? `Matches receipt total ${money(parseField(state.totalAmount)!)}`
+                  : `Off by ${money(delta!)} vs ${money(parseField(state.totalAmount)!)}`}
+            </p>
+          </div>
+        </div>
+
+        {/* Not in the design, which assumed these already known. The scan can
+            get the store wrong and the totals drive the verdict above, so they
+            have to stay reachable. */}
+        <div className="mt-3.5 rounded-card bg-surface px-4 py-3.5">
+          <StorePicker
+            storeId={state.storeId}
+            storeName={state.storeName}
+            onChange={(id, name) => dispatch({ type: 'SET_STORE', storeId: id, storeName: name })}
+            onCreateStore={async (name) => createStore(name, '#1D7A47')}
+          />
+          <div className="mt-3 flex gap-2.5">
+            <div className="flex-1">
+              <label className="mb-1.5 block text-label text-ink-2" htmlFor="receipt-date">Date</label>
+              <input
+                id="receipt-date"
+                type="date"
+                value={state.receiptDate}
+                onChange={(e) => dispatch({ type: 'SET_DATE', date: e.target.value })}
+                className="w-full rounded-input border border-border px-3 py-3 text-field"
+              />
+            </div>
+          </div>
+          <div className="mt-3 flex gap-2.5">
+            <div className="flex-1">
+              <label className="mb-1.5 block text-label text-ink-2" htmlFor="receipt-total">Receipt total</label>
+              <input
+                id="receipt-total"
+                inputMode="decimal"
+                value={state.totalAmount}
+                onChange={(e) => dispatch({ type: 'SET_TOTAL', total: e.target.value })}
+                className="w-full rounded-input border-2 border-accent px-[11px] py-[11px] text-right text-field font-medium tabular-nums"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="mb-1.5 block text-label text-ink-2" htmlFor="receipt-tax">Tax / fees</label>
+              <input
+                id="receipt-tax"
+                inputMode="decimal"
+                value={state.taxAmount}
+                onChange={(e) => dispatch({ type: 'SET_TAX', tax: e.target.value })}
+                className="w-full rounded-input border border-border px-3 py-3 text-right text-field tabular-nums"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-baseline justify-between px-1 pb-2 pt-5">
+          <span className="text-section">{state.items.length} items</span>
+          <span
+            className={`text-meta ${
+              !flagLowConfidence ? 'text-ink-2' : flaggedCount === 0 ? 'text-accent' : 'text-warn-ink'
+            }`}
           >
-            Discard
-          </button>
+            {flaggedLabel(flaggedCount, flagLowConfidence)}
+          </span>
+        </div>
+
+        <div className="overflow-hidden rounded-card">
+          {state.items.map((item, i) => (
+            <ReviewItemCard
+              key={item.id}
+              item={item}
+              flag={flags[i]}
+              expanded={state.expanded === i}
+              onToggle={() => dispatch({ type: 'TOGGLE_ROW', index: i })}
+              onName={(v) => dispatch({ type: 'EDIT_ITEM', index: i, apply: (it) => editName(it, v) })}
+              onQty={(v) => dispatch({ type: 'EDIT_ITEM', index: i, apply: (it) => editQty(it, v) })}
+              onUnitPrice={(v) => dispatch({ type: 'EDIT_ITEM', index: i, apply: (it) => editUnitPrice(it, v) })}
+              onTotal={(v) => dispatch({ type: 'EDIT_ITEM', index: i, apply: (it) => editTotal(it, v) })}
+              onCategory={(v) => dispatch({ type: 'EDIT_ITEM', index: i, apply: (it) => editCategory(it, v) })}
+              onRemove={() => dispatch({ type: 'REMOVE_ITEM', index: i })}
+              onNext={() => dispatch({ type: 'EXPAND_ROW', index: nextFlaggedIndex(flags, i) })}
+              hasNextFlagged={nextFlaggedIndex(flags, i) !== null}
+            />
+          ))}
           <button
-            onClick={() => handleSave(false)}
-            className="flex-2 flex-1 rounded-xl bg-indigo-600 py-3 text-sm font-semibold text-white hover:bg-indigo-700"
+            onClick={() => dispatch({ type: 'ADD_ITEM', category: categories[categories.length - 1] ?? 'Other' })}
+            className="w-full border-t border-hairline bg-surface px-4 py-3.5 text-left text-row text-accent"
           >
-            Confirm
+            Add item
           </button>
         </div>
-      )}
+      </div>
 
-      {/* Saving overlay */}
+      <div className="chrome-blur flex-none border-t border-border px-4 pb-7.5 pt-3">
+        <button
+          onClick={() => handleSave(false)}
+          className="w-full rounded-button bg-accent py-[15px] text-nav font-semibold text-white active:bg-accent-pressed"
+        >
+          Save receipt
+        </button>
+      </div>
+
       {state.step === 'saving' && (
-        <div className="fixed inset-0 flex items-center justify-center bg-white/80">
+        <div className="fixed inset-0 flex items-center justify-center bg-surface/80">
           <div className="flex flex-col items-center gap-3">
             <Spinner size="lg" />
-            <p className="text-gray-600 text-sm">Saving receipt…</p>
+            <p className="text-sm text-ink-2">Saving receipt…</p>
           </div>
         </div>
       )}

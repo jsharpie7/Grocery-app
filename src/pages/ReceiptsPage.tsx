@@ -1,10 +1,11 @@
-import { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useReceipts } from '../hooks/useReceipts'
 import PageShell from '../components/layout/PageShell'
 import ReceiptCard from '../components/receipts/ReceiptCard'
 import ErrorBanner from '../components/ui/ErrorBanner'
 import Spinner from '../components/ui/Spinner'
+import Toast from '../components/ui/Toast'
 import type { Receipt } from '../lib/supabase'
 
 function groupByMonth(receipts: Receipt[]): [string, Receipt[]][] {
@@ -22,9 +23,21 @@ function formatMonthHeader(m: string) {
   return new Date(m + '-01T12:00:00').toLocaleString('default', { month: 'long', year: 'numeric' })
 }
 
+interface SaveResult {
+  savedTotal?: string
+  imageUploadFailed?: boolean
+}
+
 export default function ReceiptsPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { receipts, error, loading, fetchReceipts } = useReceipts()
+
+  // A save lands here carrying its total, and confirms with a toast rather
+  // than a success screen. Read once on mount; dismissing clears the history
+  // entry so returning to this tab later does not replay it.
+  const saved = location.state as SaveResult | null
+  const [toast, setToast] = useState<SaveResult | null>(saved?.savedTotal ? saved : null)
 
   useEffect(() => { fetchReceipts(200) }, [])
 
@@ -66,13 +79,16 @@ export default function ReceiptsPage() {
         </div>
       )}
 
-      <button
-        onClick={() => navigate('/receipts/new')}
-        className="fixed bottom-24 right-4 h-14 w-14 rounded-full bg-indigo-600 text-white text-2xl shadow-lg flex items-center justify-center hover:bg-indigo-700 active:scale-95 transition-transform"
-        aria-label="Upload receipt"
-      >
-        +
-      </button>
+      {toast && (
+        <Toast
+          message={toast.imageUploadFailed ? 'Saved without photo' : 'Receipt saved'}
+          detail={toast.savedTotal}
+          onDismiss={() => {
+            setToast(null)
+            navigate('/receipts', { replace: true, state: null })
+          }}
+        />
+      )}
     </PageShell>
   )
 }
