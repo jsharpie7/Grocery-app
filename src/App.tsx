@@ -14,6 +14,7 @@ import ReceiptsPage from './pages/ReceiptsPage'
 import NewReceiptPage from './pages/NewReceiptPage'
 import ReceiptDetailPage from './pages/ReceiptDetailPage'
 import InsightsPage from './pages/InsightsPage'
+import ItemDetailPage from './pages/ItemDetailPage'
 import SettingsPage from './pages/SettingsPage'
 
 /** Screens that carry the tab bar and the FAB. Everything else is pushed or
@@ -63,6 +64,7 @@ function AppRoutes() {
         <Route path="/receipts/new" element={<NewReceiptPage />} />
         <Route path="/receipts/:id" element={<ReceiptDetailPage />} />
         <Route path="/insights" element={<InsightsPage />} />
+        <Route path="/items/:groupKey" element={<ItemDetailPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

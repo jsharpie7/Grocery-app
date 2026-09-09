@@ -11,7 +11,13 @@ export interface TopItem {
   displayName: string
   category: string
   totalSpend: number
+  /** Shopping trips this item appeared on. */
   purchaseCount: number
+  /** Units actually bought. Higher than `purchaseCount` when a trip carried
+   *  more than one — two rotisserie chickens on one receipt is one trip. */
+  unitCount: number
+  /** ISO date of the most recent purchase. */
+  lastBought: string | null
   /** Most recent unit prices, newest first, for the price-history strip. */
   recentPrices: number[]
 }
@@ -96,33 +102,43 @@ export function useInsights() {
    * labelled as spend, and read from item_prices, which stores no quantity and
    * therefore cannot express dollars spent at all.
    */
-  async function fetchTopItems(limit = 10, months = 12) {
+  async function fetchTopItems(limit = 10, months = 12, query?: string) {
+    setLoading(true)
     setError(null)
-    const { data, error: err } = await supabase.rpc('get_top_items_by_spend', {
-      p_months: months,
-      p_limit: limit,
-    })
-    if (err) { setError(err.message); return }
+    try {
+      const { data, error: err } = await supabase.rpc('get_top_items_by_spend', {
+        p_months: months,
+        p_limit: limit,
+        p_query: query?.trim() || null,
+      })
+      if (err) { setError(err.message); return }
 
-    const rows = (data ?? []) as {
-      group_key: string
-      item_id: string | null
-      display_name: string
-      category: string
-      total_spend: number | string
-      purchase_count: number | string
-      recent_prices: (number | string)[] | null
-    }[]
+      const rows = (data ?? []) as {
+        group_key: string
+        item_id: string | null
+        display_name: string
+        category: string
+        total_spend: number | string
+        purchase_count: number | string
+        unit_count: number | string | null
+        last_bought: string | null
+        recent_prices: (number | string)[] | null
+      }[]
 
-    setTopItems(rows.map((r) => ({
-      groupKey: r.group_key,
-      itemId: r.item_id,
-      displayName: r.display_name,
-      category: r.category,
-      totalSpend: Number(r.total_spend),
-      purchaseCount: Number(r.purchase_count),
-      recentPrices: (r.recent_prices ?? []).map(Number),
-    })))
+      setTopItems(rows.map((r) => ({
+        groupKey: r.group_key,
+        itemId: r.item_id,
+        displayName: r.display_name,
+        category: r.category,
+        totalSpend: Number(r.total_spend),
+        purchaseCount: Number(r.purchase_count),
+        unitCount: r.unit_count == null ? Number(r.purchase_count) : Number(r.unit_count),
+        lastBought: r.last_bought,
+        recentPrices: (r.recent_prices ?? []).map(Number),
+      })))
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function fetchCategoryBreakdown(months = 12) {

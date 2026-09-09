@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { Search, X } from 'lucide-react'
 import { useInsights } from '../hooks/useInsights'
 import { MIN_MONTHS_FOR_RATE, monthsCovered, priceTrend } from '../lib/itemTrends'
 import PageShell from '../components/layout/PageShell'
@@ -18,12 +20,25 @@ const MONTHS = 12
 const money = (n: number) => `$${n.toFixed(2)}`
 
 /**
+ * "22 bought over 13 trips", or just "13 buys" when they are the same number.
+ *
+ * These are different questions and used to be conflated: the old count was
+ * receipt lines, so two rotisserie chickens on one receipt read as one buy.
+ */
+function boughtLabel(units: number, trips: number): string {
+  const rounded = Math.round(units * 100) / 100
+  if (rounded === trips) return `${trips} buy${trips === 1 ? '' : 's'}`
+  return `${rounded} bought over ${trips} trip${trips === 1 ? '' : 's'}`
+}
+
+/**
  * One row: a name and a figure, over metadata and a trend.
  *
  * What the figure and the trend *mean* changes with the segment, so the row
  * takes them already decided rather than working them out.
  */
-function ItemRow({ name, figure, meta, trend, tone }: {
+function ItemRow({ groupKey, name, figure, meta, trend, tone }: {
+  groupKey: string
   name: string
   figure: string
   meta: string
@@ -32,7 +47,10 @@ function ItemRow({ name, figure, meta, trend, tone }: {
 }) {
   const trendColor = tone === 'up' ? 'text-danger' : tone === 'down' ? 'text-accent' : 'text-ink-2'
   return (
-    <div className="border-t border-hairline bg-surface px-4 py-3.5 first:border-t-0">
+    <Link
+      to={`/items/${encodeURIComponent(groupKey)}`}
+      className="block border-t border-hairline bg-surface px-4 py-3.5 first:border-t-0 active:bg-canvas"
+    >
       <div className="flex items-baseline justify-between gap-3">
         <span className="min-w-0 flex-1 truncate text-row">{name}</span>
         <span className="text-[16px] font-semibold leading-none tabular-nums">{figure}</span>
@@ -41,16 +59,29 @@ function ItemRow({ name, figure, meta, trend, tone }: {
         <span className="min-w-0 flex-1 truncate text-[12px] leading-none text-ink-2">{meta}</span>
         <span className={`text-[12px] font-semibold leading-none ${trendColor}`}>{trend}</span>
       </div>
-    </div>
+    </Link>
   )
 }
 
 export default function InsightsPage() {
   const [sort, setSort] = useState<Sort>('spend')
+  const [search, setSearch] = useState('')
+  const [query, setQuery] = useState('')
   const { topItems, monthlyData, error, loading, fetchTopItems, fetchMonthlySpend } = useInsights()
 
+  // Debounced so a query goes out per pause, not per keystroke.
   useEffect(() => {
-    fetchTopItems(25, MONTHS)
+    const t = setTimeout(() => setQuery(search), 250)
+    return () => clearTimeout(t)
+  }, [search])
+
+  // A search looks across everything, so it lifts the top-25 cap that makes
+  // sense for a leaderboard but would hide most matches.
+  useEffect(() => {
+    fetchTopItems(query.trim() ? 200 : 25, MONTHS, query)
+  }, [query])
+
+  useEffect(() => {
     // Not for a chart — this is how the screen learns how long the household
     // has actually been tracking, which is the divisor for every /mo figure.
     fetchMonthlySpend(MONTHS)
@@ -79,6 +110,32 @@ export default function InsightsPage() {
       <div className="px-4">
         <ErrorBanner message={error} />
 
+        <div className="relative mb-3">
+          <Search
+            size={17}
+            strokeWidth={1.75}
+            aria-hidden
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-3"
+          />
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search items"
+            aria-label="Search items"
+            className="w-full rounded-input border border-border bg-surface py-2.5 pl-9 pr-9 text-field"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              aria-label="Clear search"
+              className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center text-ink-3"
+            >
+              <X size={17} strokeWidth={1.75} aria-hidden />
+            </button>
+          )}
+        </div>
+
         <div className="mb-4 flex rounded-seg bg-track p-[3px]">
           {SORTS.map(([id, label]) => (
             <button
@@ -98,9 +155,11 @@ export default function InsightsPage() {
           <div className="flex justify-center py-12"><Spinner size="lg" /></div>
         ) : isEmpty ? (
           <p className="px-1 py-12 text-center text-meta text-ink-2">
-            {sort === 'price'
+            {query.trim()
+              ? `Nothing matching “${query.trim()}” in the last ${MONTHS} months.`
+              : sort === 'price'
               ? 'No price movement yet. Prices show up here once an item has been bought more than once.'
-              : 'No item spend yet. Scan a receipt to start tracking.'}
+                : 'No item spend yet. Scan a receipt to start tracking.'}
           </p>
         ) : (
           <>
@@ -116,9 +175,10 @@ export default function InsightsPage() {
               return (
                 <ItemRow
                   key={t.groupKey}
+                  groupKey={t.groupKey}
                   name={t.displayName}
                   figure={figureFor(t.totalSpend)}
-                  meta={`${t.category} · ${t.purchaseCount} buy${t.purchaseCount === 1 ? '' : 's'}${
+                  meta={`${t.category} · ${boughtLabel(t.unitCount, t.purchaseCount)}${
                     showRate ? ` · ${money(t.totalSpend)} in ${monthsTracked} mo` : ' · total so far'
                   }`}
                   trend={trend.direction === 'flat' ? 'flat' : `${trend.direction === 'up' ? '↑' : '↓'} ${Math.abs(trend.percent)}%`}
@@ -130,6 +190,7 @@ export default function InsightsPage() {
             {sort === 'price' && priced.map(({ item, trend }) => (
               <ItemRow
                 key={item.groupKey}
+                groupKey={item.groupKey}
                 name={item.displayName}
                 figure={figureFor(item.totalSpend)}
                 meta={`${item.category} · was ${money(trend.oldest!)}, now ${money(trend.latest!)}`}
