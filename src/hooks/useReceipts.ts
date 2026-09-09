@@ -131,6 +131,53 @@ export function useReceipts() {
     }
   }
 
+  /**
+   * Correct a saved receipt's header: date, store, total, tax.
+   *
+   * Line items are not touched — they are corrected on the review screen at
+   * scan time, and rewriting them here would mean re-running item matching,
+   * price history and aliases for a change that is usually a mistyped date.
+   *
+   * `item_prices` rows carry their own store and timestamp, copied from the
+   * receipt when it was saved, so they move with it. Without this an edited
+   * receipt and its price history would disagree about where and when the
+   * purchase happened.
+   */
+  async function updateReceipt(
+    id: string,
+    fields: { receiptDate: string; storeId: string | null; totalAmount: number; taxAmount: number },
+  ): Promise<boolean> {
+    setError(null)
+
+    const { error: err } = await supabase
+      .from('receipts')
+      .update({
+        receipt_date: fields.receiptDate,
+        store_id: fields.storeId,
+        total_amount: fields.totalAmount,
+        tax_amount: fields.taxAmount,
+      })
+      .eq('id', id)
+
+    if (err) { setError(err.message); return false }
+
+    // Best effort: the receipt itself is the record of truth, and a failure to
+    // realign price history should not present the edit as having failed.
+    await supabase
+      .from('item_prices')
+      .update({ store_id: fields.storeId, purchased_at: `${fields.receiptDate}T12:00:00Z` })
+      .eq('receipt_id', id)
+
+    setReceipts((prev) =>
+      prev.map((r) =>
+        r.id === id
+          ? { ...r, receipt_date: fields.receiptDate, store_id: fields.storeId, total_amount: fields.totalAmount, tax_amount: fields.taxAmount }
+          : r,
+      ),
+    )
+    return true
+  }
+
   async function deleteReceipt(id: string) {
     setError(null)
     const { error: err } = await supabase.from('receipts').delete().eq('id', id)
@@ -325,5 +372,5 @@ export function useReceipts() {
     }
   }
 
-  return { receipts, error, loading, fetchReceipts, createReceipt, deleteReceipt, resolveStoreId, resolveAliasesForReview }
+  return { receipts, error, loading, fetchReceipts, createReceipt, updateReceipt, deleteReceipt, resolveStoreId, resolveAliasesForReview }
 }
