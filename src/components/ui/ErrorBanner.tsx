@@ -20,9 +20,9 @@ export default function ErrorBanner({ message, onDismiss }: ErrorBannerProps) {
   }
 
   return (
-    <div className="mx-4 mt-3 flex items-start gap-3 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+    <div className="mb-3.5 flex items-start gap-3 rounded-card border border-danger/25 bg-danger/5 px-4 py-3 text-meta leading-normal text-danger">
       <span className="flex-1">{message}</span>
-      <button onClick={dismiss} className="shrink-0 font-medium text-red-500 hover:text-red-700">
+      <button onClick={dismiss} className="shrink-0 font-semibold">
         Dismiss
       </button>
     </div>

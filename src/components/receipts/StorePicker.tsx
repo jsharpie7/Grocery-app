@@ -30,12 +30,15 @@ export default function StorePicker({ storeId, storeName, onChange, onCreateStor
 
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">Store</label>
-      <div className="flex flex-wrap gap-2">
+      <label className="mb-1.5 block text-label text-ink-2">Store</label>
+      {/* Pills follow the review screen's category chips: same radius, same
+          selected treatment, so the two choosers read as one control. */}
+      <div className="flex flex-wrap gap-[7px]">
         <button
           onClick={() => onChange(null, '')}
-          className={`rounded-full px-3 py-1 text-sm border transition-colors ${
-            !storeId ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-300'
+          aria-pressed={!storeId}
+          className={`rounded-chip border px-[13px] py-[7px] text-chip-label ${
+            !storeId ? 'border-accent bg-accent text-white' : 'border-border bg-surface text-ink'
           }`}
         >
           Unknown
@@ -44,10 +47,11 @@ export default function StorePicker({ storeId, storeName, onChange, onCreateStor
           <button
             key={store.id}
             onClick={() => onChange(store.id, store.name)}
-            className={`flex items-center gap-1.5 rounded-full py-1 pl-1 pr-3 text-sm border transition-colors ${
+            aria-pressed={storeId === store.id}
+            className={`flex items-center gap-1.5 rounded-chip border py-1 pl-1 pr-[13px] text-chip-label ${
               storeId === store.id
-                ? 'text-white border-transparent'
-                : 'bg-white text-gray-600 border-gray-300'
+                ? 'border-transparent text-white'
+                : 'border-border bg-surface text-ink'
             }`}
             style={storeId === store.id ? { backgroundColor: store.color, borderColor: store.color } : {}}
           >
@@ -57,22 +61,22 @@ export default function StorePicker({ storeId, storeName, onChange, onCreateStor
         ))}
         <button
           onClick={() => setShowNew(!showNew)}
-          className="rounded-full px-3 py-1 text-sm border border-dashed border-gray-300 text-gray-500"
+          className="rounded-chip border border-dashed border-border-strong px-[13px] py-[7px] text-chip-label text-accent"
         >
-          + New Store
+          + New store
         </button>
       </div>
 
       {storeName && !storeId && (
-        <p className="mt-1 text-xs text-gray-500">
-          From receipt: "{storeName}" — select a store above or add a new one
+        <p className="mt-2 text-label leading-normal text-ink-2">
+          On receipt: “{storeName}” — pick a store above or add a new one
         </p>
       )}
 
       {showNew && (
-        <div className="mt-2 flex gap-2">
+        <div className="mt-3 flex gap-2">
           <input
-            className="flex-1 rounded border border-gray-300 px-3 py-1.5 text-sm"
+            className="min-w-0 flex-1 rounded-input border border-border px-3 py-2.5 text-field"
             placeholder="Store name"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
@@ -81,7 +85,7 @@ export default function StorePicker({ storeId, storeName, onChange, onCreateStor
           <button
             onClick={handleCreate}
             disabled={creating || !newName.trim()}
-            className="rounded bg-indigo-600 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            className="flex-none rounded-input bg-accent px-4 text-nav font-semibold text-white disabled:opacity-50"
           >
             {creating ? '…' : 'Add'}
           </button>

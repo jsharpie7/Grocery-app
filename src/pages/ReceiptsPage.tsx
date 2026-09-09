@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useReceipts } from '../hooks/useReceipts'
+import { monthYearLabel } from '../lib/dates'
 import PageShell from '../components/layout/PageShell'
 import ReceiptCard from '../components/receipts/ReceiptCard'
 import ErrorBanner from '../components/ui/ErrorBanner'
@@ -8,6 +9,7 @@ import Spinner from '../components/ui/Spinner'
 import Toast from '../components/ui/Toast'
 import type { Receipt } from '../lib/supabase'
 
+/** Newest month first; receipts arrive already sorted by date descending. */
 function groupByMonth(receipts: Receipt[]): [string, Receipt[]][] {
   const map = new Map<string, Receipt[]>()
   for (const r of receipts) {
@@ -17,10 +19,6 @@ function groupByMonth(receipts: Receipt[]): [string, Receipt[]][] {
     map.set(month, list)
   }
   return Array.from(map.entries())
-}
-
-function formatMonthHeader(m: string) {
-  return new Date(m + '-01T12:00:00').toLocaleString('default', { month: 'long', year: 'numeric' })
 }
 
 interface SaveResult {
@@ -45,38 +43,39 @@ export default function ReceiptsPage() {
 
   return (
     <PageShell title="Receipts">
-      <ErrorBanner message={error} />
+      <div className="px-4"><ErrorBanner message={error} /></div>
 
       {loading ? (
         <div className="flex justify-center py-12"><Spinner size="lg" /></div>
       ) : receipts.length === 0 ? (
         <div className="flex flex-col items-center justify-center px-6 py-20 text-center">
-          <div className="text-5xl mb-4">🧾</div>
-          <h2 className="text-lg font-semibold text-gray-800 mb-2">No receipts yet</h2>
-          <p className="text-gray-500 text-sm mb-6">Upload a receipt to start tracking your spending</p>
+          <h2 className="mb-2 text-section">No receipts yet</h2>
+          <p className="mb-6 text-meta text-ink-2">Scan a receipt to start tracking your spending</p>
           <button
             onClick={() => navigate('/receipts/new')}
-            className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white hover:bg-indigo-700"
+            className="rounded-button bg-accent px-6 py-3 text-nav font-semibold text-white active:bg-accent-pressed"
           >
-            Upload Receipt
+            Scan a receipt
           </button>
         </div>
       ) : (
-        <div>
-          {grouped.map(([month, items]) => (
-            <div key={month}>
-              <div className="bg-gray-50 px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide border-b border-gray-200">
-                {formatMonthHeader(month)}
-                <span className="float-right font-normal normal-case">
-                  ${items.reduce((s, r) => s + Number(r.total_amount), 0).toFixed(2)}
-                </span>
-              </div>
-              <div className="divide-y divide-gray-100 bg-white">
-                {items.map((r) => <ReceiptCard key={r.id} receipt={r} />)}
-              </div>
+        grouped.map(([month, items]) => (
+          <section key={month}>
+            {/* A plain header floating over the canvas — the old full-bleed
+                grey strip read as a divider between apps, not months. */}
+            <div className="flex justify-between px-5 pb-2 pt-1.5">
+              <span className="text-[13px] font-semibold uppercase leading-none tracking-[0.3px] text-ink-muted">
+                {monthYearLabel(month)}
+              </span>
+              <span className="text-meta tabular-nums text-ink-2">
+                ${items.reduce((s, r) => s + Number(r.total_amount), 0).toFixed(2)}
+              </span>
             </div>
-          ))}
-        </div>
+            <div className="mx-4 mb-4.5 overflow-hidden rounded-card">
+              {items.map((r) => <ReceiptCard key={r.id} receipt={r} showChevron />)}
+            </div>
+          </section>
+        ))
       )}
 
       {toast && (

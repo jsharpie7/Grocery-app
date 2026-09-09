@@ -1,44 +1,44 @@
 import { useNavigate } from 'react-router-dom'
+import StoreBadge from '../ui/StoreBadge'
+import { shortDate } from '../../lib/dates'
 import type { Receipt } from '../../lib/supabase'
 
 interface ReceiptCardProps {
   receipt: Receipt
+  /** Receipts list rows disclose; dashboard rows don't. */
+  showChevron?: boolean
 }
 
-export default function ReceiptCard({ receipt }: ReceiptCardProps) {
+/**
+ * One receipt in a grouped list.
+ *
+ * The inline receipt thumbnail this used to carry is gone: at 40px it showed
+ * nothing legible, and the photo has a proper place on the detail screen.
+ */
+export default function ReceiptCard({ receipt, showChevron = false }: ReceiptCardProps) {
   const navigate = useNavigate()
-  const color = receipt.store?.color ?? '#6366f1'
-  const date = new Date(receipt.receipt_date + 'T12:00:00').toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
-  })
+  const name = receipt.store?.name ?? 'Unknown store'
+  const count = receipt.item_count
 
   return (
     <button
       onClick={() => navigate(`/receipts/${receipt.id}`)}
-      className="flex w-full items-center gap-3 bg-white px-4 py-3 text-left hover:bg-gray-50 active:bg-gray-100"
+      className="flex w-full items-center gap-3 border-t border-hairline bg-surface px-4 py-3 text-left first:border-t-0 active:bg-canvas"
     >
-      <div
-        className="h-10 w-10 shrink-0 rounded-full flex items-center justify-center text-white text-sm font-bold"
-        style={{ backgroundColor: color }}
-      >
-        {(receipt.store?.name ?? '?')[0].toUpperCase()}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="font-medium text-gray-900 truncate">
-          {receipt.store?.name ?? 'Unknown Store'}
-        </div>
-        <div className="text-sm text-gray-500">{date}</div>
-      </div>
-      {receipt.image_url && (
-        <img
-          src={receipt.image_url}
-          alt="Receipt"
-          className="h-10 w-10 shrink-0 rounded object-cover"
-        />
-      )}
-      <div className="shrink-0 text-right">
-        <div className="font-semibold text-gray-900">${Number(receipt.total_amount).toFixed(2)}</div>
-      </div>
+      <StoreBadge
+        name={name}
+        color={receipt.store?.color ?? '#8A8A8E'}
+        className="h-[34px] w-[34px] text-xs"
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-row">{name}</span>
+        <span className="mt-0.5 block text-meta text-ink-2">
+          {shortDate(receipt.receipt_date)}
+          {count != null && ` · ${count} item${count === 1 ? '' : 's'}`}
+        </span>
+      </span>
+      <span className="text-amount tabular-nums">${Number(receipt.total_amount).toFixed(2)}</span>
+      {showChevron && <span aria-hidden className="text-nav text-ink-4">›</span>}
     </button>
   )
 }

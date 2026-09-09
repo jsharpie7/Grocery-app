@@ -58,7 +58,7 @@ export default function ReviewItemCard({
 
   return (
     <div
-      className={`border-l-[3px] border-t border-t-hairline ${
+      className={`border-l-[3px] border-t border-t-hairline first:border-t-0 ${
         flag ? 'border-l-warn bg-warn-bg' : 'border-l-transparent bg-surface'
       }`}
     >

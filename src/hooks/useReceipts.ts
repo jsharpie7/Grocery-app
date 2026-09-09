@@ -102,14 +102,30 @@ export function useReceipts() {
     setLoading(true)
     setError(null)
     try {
-      const { data, error: err } = await supabase
+      // List rows read "{date} · {n} items", so the count comes back with the
+      // receipt rather than as a query per row. If the embedded aggregate is
+      // unavailable, fall back to the plain select: a missing count costs one
+      // line of caption, an unhandled error costs the whole list.
+      const query = (select: string) => supabase
         .from('receipts')
-        .select('*, store:stores(*)')
+        .select(select)
         .eq('household_id', householdId)
         .order('receipt_date', { ascending: false })
         .limit(limit)
+
+      let { data, error: err } = await query('*, store:stores(*), receipt_items(count)')
+      if (err) {
+        ({ data, error: err } = await query('*, store:stores(*)'))
+      }
       if (err) { setError(err.message); return }
-      setReceipts((data as Receipt[]) ?? [])
+
+      type CountRow = Receipt & { receipt_items?: { count: number }[] }
+      setReceipts(
+        ((data as unknown as CountRow[]) ?? []).map(({ receipt_items, ...r }) => ({
+          ...r,
+          item_count: receipt_items?.[0]?.count,
+        })),
+      )
     } finally {
       setLoading(false)
     }
@@ -130,7 +146,7 @@ export function useReceipts() {
 
     const { data, error: err } = await supabase
       .from('stores')
-      .insert({ household_id: householdId, name: storeName.trim(), color: '#6366f1' })
+      .insert({ household_id: householdId, name: storeName.trim(), color: '#1D7A47' })
       .select()
       .single()
     if (err) return null

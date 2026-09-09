@@ -17,7 +17,7 @@ export default function OfflineBanner() {
   if (!offline) return null
 
   return (
-    <div className="sticky top-0 z-50 bg-yellow-400 px-4 py-2 text-center text-sm font-medium text-yellow-900">
+    <div className="sticky top-0 z-50 bg-warn px-4 py-2 text-center text-meta font-medium text-white">
       You're offline. Changes may not save.
     </div>
   )

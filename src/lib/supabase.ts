@@ -51,6 +51,8 @@ export type Receipt = {
   notes: string | null
   // joined
   store?: Store
+  /** Line-item count, when the query asked for it. See `fetchReceipts`. */
+  item_count?: number
 }
 
 export type ReceiptItem = {
