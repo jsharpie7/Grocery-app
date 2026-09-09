@@ -343,7 +343,7 @@ const THINKING_LEVEL = 'low'
 // Deliberately left at 45s. The previous round raised this from 20s and it did not help — a
 // timeout is the symptom, not the cause. With a legible image and a bounded output, a scan that
 // cannot finish in 45s is not going to finish in 90s either.
-const REQUEST_TIMEOUT_MS = 45000
+export const REQUEST_TIMEOUT_MS = 45000
 
 interface GeminiResponse {
   candidates?: Array<{

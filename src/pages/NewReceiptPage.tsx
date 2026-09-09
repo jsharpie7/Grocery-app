@@ -1,10 +1,12 @@
-import { useReducer, useRef } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { extractReceiptFromImage, getLastScanDiagnostics, type ScanDiagnostics, type ScanError } from '../lib/gemini'
+import { Images } from 'lucide-react'
+import { REQUEST_TIMEOUT_MS, type ExtractedReceiptData } from '../lib/gemini'
 import { normalizeStoreName } from '../lib/itemMatcher'
 import { useReceipts } from '../hooks/useReceipts'
 import { useStores } from '../hooks/useStores'
 import { useHouseholdStore } from '../store/householdStore'
+import { useScanStore } from '../store/scanStore'
 import {
   editCategory,
   editName,
@@ -26,13 +28,9 @@ import ErrorBanner from '../components/ui/ErrorBanner'
 import Spinner from '../components/ui/Spinner'
 import ScanDetails from '../components/receipts/ScanDetails'
 
-type Step = 'capture' | 'extracting' | 'review' | 'saving'
-
 interface State {
-  step: Step
-  imageFile: File | null
-  imagePreview: string | null
-  extractError: string | null
+  /** 'idle' means no receipt is being reviewed — capture or scanning is showing. */
+  step: 'idle' | 'review' | 'saving'
   saveError: string | null
   isDuplicate: boolean
   storeId: string | null
@@ -44,15 +42,10 @@ interface State {
   /** Index of the one open row. The design allows exactly one at a time. */
   expanded: number | null
   geminiKeyInput: string
-  scanDiagnostics: ScanDiagnostics | null
 }
 
 type Action =
-  | { type: 'SET_FILE'; file: File; preview: string }
-  | { type: 'EXTRACT_START' }
   | { type: 'EXTRACT_SUCCESS'; storeName: string; receiptDate: string; totalAmount: string; taxAmount: string; items: ReviewItem[] }
-  | { type: 'EXTRACT_ERROR'; error: string; diagnostics: ScanDiagnostics | null }
-  | { type: 'RETRY_EXTRACT' }
   | { type: 'SET_STORE'; storeId: string | null; storeName: string }
   | { type: 'SET_DATE'; date: string }
   | { type: 'SET_TOTAL'; total: string }
@@ -64,7 +57,6 @@ type Action =
   | { type: 'ADD_ITEM'; category: string }
   | { type: 'SAVE_START' }
   | { type: 'SAVE_ERROR'; error: string; isDuplicate?: boolean }
-  | { type: 'FORCE_SAVE' }
   | { type: 'SET_GEMINI_KEY_INPUT'; value: string }
   | { type: 'GEMINI_KEY_SET' }
 
@@ -73,10 +65,7 @@ function today() {
 }
 
 const initial: State = {
-  step: 'capture',
-  imageFile: null,
-  imagePreview: null,
-  extractError: null,
+  step: 'idle',
   saveError: null,
   isDuplicate: false,
   storeId: null,
@@ -87,15 +76,10 @@ const initial: State = {
   items: [],
   expanded: null,
   geminiKeyInput: '',
-  scanDiagnostics: null,
 }
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
-    case 'SET_FILE':
-      return { ...state, imageFile: action.file, imagePreview: action.preview }
-    case 'EXTRACT_START':
-      return { ...state, step: 'extracting', extractError: null, scanDiagnostics: null }
     case 'EXTRACT_SUCCESS': {
       // Land on the first thing needing attention rather than at the top of a
       // list the user would otherwise have to scan themselves.
@@ -109,14 +93,8 @@ function reducer(state: State, action: Action): State {
         taxAmount: action.taxAmount,
         items: action.items,
         expanded: firstFlagged < 0 ? null : firstFlagged,
-        extractError: null,
-        scanDiagnostics: null,
       }
     }
-    case 'EXTRACT_ERROR':
-      return { ...state, step: 'capture', extractError: action.error, scanDiagnostics: action.diagnostics }
-    case 'RETRY_EXTRACT':
-      return { ...state, step: 'capture', extractError: null, scanDiagnostics: null }
     case 'SET_STORE':
       return { ...state, storeId: action.storeId, storeName: action.storeName }
     case 'SET_DATE':
@@ -135,11 +113,7 @@ function reducer(state: State, action: Action): State {
         items: state.items.map((it, i) => (i === action.index ? action.apply(it) : it)),
       }
     case 'REMOVE_ITEM':
-      return {
-        ...state,
-        items: state.items.filter((_, i) => i !== action.index),
-        expanded: null,
-      }
+      return { ...state, items: state.items.filter((_, i) => i !== action.index), expanded: null }
     case 'ADD_ITEM':
       // Opens immediately: an empty row is only useful once you can type in it.
       return {
@@ -151,8 +125,6 @@ function reducer(state: State, action: Action): State {
       return { ...state, step: 'saving', saveError: null, isDuplicate: false }
     case 'SAVE_ERROR':
       return { ...state, step: 'review', saveError: action.error, isDuplicate: !!action.isDuplicate }
-    case 'FORCE_SAVE':
-      return { ...state, isDuplicate: false, saveError: null }
     case 'SET_GEMINI_KEY_INPUT':
       return { ...state, geminiKeyInput: action.value }
     case 'GEMINI_KEY_SET':
@@ -164,6 +136,22 @@ function reducer(state: State, action: Action): State {
 
 const money = (n: number) => `$${n.toFixed(2)}`
 
+/**
+ * How far along the scan is, 0–1.
+ *
+ * Measured against the request's own 45s timeout rather than against the
+ * model's output, because the request is not streamed and reports nothing
+ * until it returns — there is no token-level progress to read. Elapsed time
+ * against the deadline is the one real quantity available, so the bar answers
+ * "how much of the budget is spent", which is what the 45s copy beside it is
+ * about. It stops short of full: a filled bar on a scan still running would be
+ * a lie.
+ */
+function scanFraction(startedAt: number | null, now: number): number {
+  if (!startedAt) return 0
+  return Math.min((now - startedAt) / REQUEST_TIMEOUT_MS, 0.95)
+}
+
 export default function NewReceiptPage() {
   const navigate = useNavigate()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -171,69 +159,69 @@ export default function NewReceiptPage() {
   const { createReceipt, resolveStoreId, resolveAliasesForReview } = useReceipts()
   const { createStore } = useStores()
   const { geminiKey, geminiModel, setGeminiKey, categories, flagLowConfidence, stores } = useHouseholdStore()
+  const scan = useScanStore()
 
-  function handleFileSelect(file: File) {
-    const preview = URL.createObjectURL(file)
-    dispatch({ type: 'SET_FILE', file, preview })
-    startExtract(file)
+  // ─── SCAN ────────────────────────────────────────────────────────────────
+
+  function startScan(file: File) {
+    const key = geminiKey.trim()
+    if (!key) return
+    scan.start(file, key, geminiModel)
   }
 
-  async function startExtract(file: File) {
-    const key = geminiKey.trim()
-    if (!key) {
-      dispatch({ type: 'EXTRACT_ERROR', error: 'Gemini API key required. Enter your key below.', diagnostics: null })
-      return
-    }
-    dispatch({ type: 'EXTRACT_START' })
-    try {
-      const data = await extractReceiptFromImage(file, key, geminiModel)
+  // Folds a finished scan into the review screen. Runs whenever a result is
+  // waiting, which is either the moment it lands or the moment the user comes
+  // back to this screen having left mid-scan.
+  const foldedResult = useRef<ExtractedReceiptData | null>(null)
+  useEffect(() => {
+    const result = scan.result
+    if (scan.status !== 'done' || !result || foldedResult.current === result) return
+    foldedResult.current = result
 
-      // Auto-match store
-      const stores = useHouseholdStore.getState().stores
+    let abandoned = false
+    void (async () => {
+      const allStores = useHouseholdStore.getState().stores
       let matchedStoreId: string | null = null
-      if (data.store_name) {
-        const norm = normalizeStoreName(data.store_name)
-        const found = stores.find((s) => normalizeStoreName(s.name) === norm)
-        if (found) matchedStoreId = found.id
+      if (result.store_name) {
+        const norm = normalizeStoreName(result.store_name)
+        matchedStoreId = allStores.find((s) => normalizeStoreName(s.name) === norm)?.id ?? null
       }
 
-      // Safe date parse
+      // A date the model invented can fail to parse; today is a better guess
+      // than a crash.
       let parsedDate = today()
-      if (data.receipt_date) {
-        const d = new Date(data.receipt_date + 'T12:00:00')
-        if (!isNaN(d.getTime())) parsedDate = data.receipt_date
+      if (result.receipt_date && !isNaN(new Date(`${result.receipt_date}T12:00:00`).getTime())) {
+        parsedDate = result.receipt_date
       }
 
-      const pendingItems = await resolveAliasesForReview(data.items, matchedStoreId)
+      const pendingItems = await resolveAliasesForReview(result.items, matchedStoreId)
+      if (abandoned) return
 
       dispatch({
         type: 'EXTRACT_SUCCESS',
-        storeName: data.store_name,
+        storeName: result.store_name,
         receiptDate: parsedDate,
-        totalAmount: data.total_amount != null ? String(data.total_amount) : '',
-        taxAmount: data.tax_amount != null ? String(data.tax_amount) : '',
+        totalAmount: result.total_amount != null ? String(result.total_amount) : '',
+        taxAmount: result.tax_amount != null ? String(result.tax_amount) : '',
         items: toReviewItems(pendingItems),
       })
 
-      if (matchedStoreId) {
-        const store = stores.find((s) => s.id === matchedStoreId)
-        if (store) dispatch({ type: 'SET_STORE', storeId: matchedStoreId, storeName: store.name })
-      }
-    } catch (e) {
-      dispatch({
-        type: 'EXTRACT_ERROR',
-        error: (e as Error).message,
-        diagnostics: (e as ScanError).diagnostics ?? getLastScanDiagnostics(),
-      })
-    }
-  }
+      const matched = allStores.find((s) => s.id === matchedStoreId)
+      if (matched) dispatch({ type: 'SET_STORE', storeId: matched.id, storeName: matched.name })
+
+      useScanStore.getState().consume()
+    })()
+
+    return () => { abandoned = true }
+  }, [scan.status, scan.result, resolveAliasesForReview])
+
+  // ─── SAVE ────────────────────────────────────────────────────────────────
 
   async function handleSave(force = false) {
     if (state.items.length === 0) {
       dispatch({ type: 'SAVE_ERROR', error: 'Receipt must have at least 1 item.' })
       return
     }
-
     if (!force && state.isDuplicate) return
 
     const total = parseFloat(state.totalAmount)
@@ -247,9 +235,7 @@ export default function NewReceiptPage() {
 
     try {
       let storeId = state.storeId
-      if (!storeId && state.storeName.trim()) {
-        storeId = await resolveStoreId(state.storeName)
-      }
+      if (!storeId && state.storeName.trim()) storeId = await resolveStoreId(state.storeName)
 
       const { imageUploadFailed } = await createReceipt({
         storeId,
@@ -257,15 +243,13 @@ export default function NewReceiptPage() {
         totalAmount: total,
         taxAmount: isNaN(tax) ? 0 : tax,
         items: toPendingItems(state.items).filter((i) => i.item_name.trim()),
-        imageFile: state.imageFile,
+        imageFile: scan.file,
       })
 
+      useScanStore.getState().reset()
       // The design confirms with a toast on the Receipts tab rather than a
       // success screen, so the save ends by landing there.
-      navigate('/receipts', {
-        replace: true,
-        state: { savedTotal: money(total), imageUploadFailed },
-      })
+      navigate('/receipts', { replace: true, state: { savedTotal: money(total), imageUploadFailed } })
     } catch (e) {
       const err = e as Error & { code?: string; isDuplicate?: boolean }
       const isDup = err.isDuplicate || err.code === '23505'
@@ -280,9 +264,164 @@ export default function NewReceiptPage() {
   }
 
   function saveGeminiKey() {
-    setGeminiKey(state.geminiKeyInput.trim())
+    const key = state.geminiKeyInput.trim()
+    setGeminiKey(key)
     dispatch({ type: 'GEMINI_KEY_SET' })
-    if (state.imageFile) startExtract(state.imageFile)
+    if (scan.file && key) scan.start(scan.file, key, geminiModel)
+  }
+
+  function cancel() {
+    // A running scan is deliberately left alone: the scanning screen promises
+    // it keeps going, and Cancel here means "put this away", not "abort".
+    if (state.step === 'review') useScanStore.getState().reset()
+    navigate('/receipts')
+  }
+
+  // ─── SCANNING ────────────────────────────────────────────────────────────
+
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (scan.status !== 'running') return
+    const tick = setInterval(() => setNow(Date.now()), 250)
+    return () => clearInterval(tick)
+  }, [scan.status])
+
+  if (scan.status === 'running') {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-4.5 bg-canvas px-10 text-center">
+        <div className="h-[68px] w-[54px] rounded-lg border border-border bg-[repeating-linear-gradient(180deg,#E4E4E8_0_4px,#F4F4F7_4px_8px)]" />
+        <p className="text-[19px] font-semibold leading-snug">Reading the receipt…</p>
+        <p className="text-[14px] leading-normal text-ink-2">
+          Large receipts can take up to 45 seconds. You can leave this screen — it keeps going.
+        </p>
+        <div
+          className="h-1 w-[180px] overflow-hidden rounded-sm bg-track"
+          role="progressbar"
+          aria-label="Scanning receipt"
+        >
+          <div
+            className="h-full bg-accent transition-[width] duration-200 ease-linear"
+            style={{ width: `${scanFraction(scan.startedAt, now) * 100}%` }}
+          />
+        </div>
+      </div>
+    )
+  }
+
+  // ─── CAPTURE ─────────────────────────────────────────────────────────────
+
+  if (state.step === 'idle') {
+    const needsKey = !geminiKey.trim()
+    const blocked = needsKey || !!scan.error
+
+    return (
+      <div className="flex h-full flex-col bg-[#1A1A1C] text-white">
+        <div className="flex flex-none items-center justify-between px-4.5 pb-3.5 pt-2">
+          <button onClick={cancel} className="text-nav text-white">Cancel</button>
+          <span className="text-nav font-semibold">New receipt</span>
+          <span className="w-[52px]" />
+        </div>
+
+        <div className="relative flex-1 overflow-hidden bg-[#232326]">
+          {scan.preview ? (
+            <img src={scan.preview} alt="Receipt" className="h-full w-full object-contain" />
+          ) : (
+            <>
+              {/* Not a viewfinder: this is a PWA, so the shutter hands off to
+                  the system camera. The frame shows how to hold the receipt. */}
+              <div className="absolute inset-x-[46px] bottom-[150px] top-[70px] rounded-[10px] border-2 border-white/85" />
+              <p className="absolute inset-x-0 top-[34px] text-center text-[14px] font-medium text-white/75">
+                Fill the frame with the receipt
+              </p>
+            </>
+          )}
+
+          {blocked && (
+            <div className="absolute inset-x-3 bottom-3 max-h-[60%] overflow-y-auto rounded-card bg-surface p-4 text-ink">
+              {scan.error && (
+                <>
+                  <ErrorBanner message={scan.error} onDismiss={() => scan.reset()} />
+                  <ScanDetails diagnostics={scan.diagnostics} />
+                  {scan.file && !needsKey && (
+                    <button
+                      onClick={() => startScan(scan.file!)}
+                      className="mt-3 w-full rounded-button bg-accent py-3 text-nav font-semibold text-white"
+                    >
+                      Retry scan
+                    </button>
+                  )}
+                </>
+              )}
+
+              {needsKey && (
+                <div className={scan.error ? 'mt-4' : ''}>
+                  <p className="mb-1 text-section">Gemini API key required</p>
+                  <p className="mb-3 text-meta text-ink-2">
+                    Get a free key at <span className="font-medium">aistudio.google.com/app/apikey</span>
+                  </p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="AIza..."
+                      value={state.geminiKeyInput}
+                      onChange={(e) => dispatch({ type: 'SET_GEMINI_KEY_INPUT', value: e.target.value })}
+                      className="min-w-0 flex-1 rounded-input border border-border px-3 py-2.5 text-field"
+                    />
+                    <button
+                      onClick={saveGeminiKey}
+                      disabled={!state.geminiKeyInput.trim()}
+                      className="flex-none rounded-input bg-accent px-4 text-nav font-semibold text-white disabled:opacity-50"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="absolute inset-x-0 bottom-[56px] flex items-center justify-center gap-6.5">
+            <button
+              onClick={() => {
+                fileInputRef.current!.removeAttribute('capture')
+                fileInputRef.current!.click()
+              }}
+              aria-label="Choose from library"
+              className="flex h-[46px] w-[46px] items-center justify-center rounded-lg border border-white/25 bg-white/10 text-white/75"
+            >
+              {/* The prototype stood this in with a striped square; a real
+                  glyph says "library" without needing the caption. */}
+              <Images size={20} strokeWidth={1.5} aria-hidden />
+            </button>
+            <button
+              onClick={() => {
+                fileInputRef.current!.setAttribute('capture', 'environment')
+                fileInputRef.current!.click()
+              }}
+              aria-label="Take a photo"
+              className="h-[74px] w-[74px] rounded-full bg-white shadow-[0_0_0_5px_rgba(255,255,255,0.25)]"
+            />
+            {/* The design's Flash control is omitted: a PWA hands capture to
+                the system camera and cannot drive the torch, and a button that
+                does nothing is worse than no button. Spacer keeps the shutter
+                centred. */}
+            <span className="h-[46px] w-[46px]" />
+          </div>
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) startScan(f)
+            e.target.value = ''
+          }}
+        />
+      </div>
+    )
   }
 
   // ─── DERIVED ─────────────────────────────────────────────────────────────
@@ -300,99 +439,6 @@ export default function NewReceiptPage() {
     parseField(state.totalAmount),
   )
 
-  // ─── RENDER ──────────────────────────────────────────────────────────────
-
-  if (state.step === 'extracting') {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-4">
-        <Spinner size="lg" />
-        <p className="text-sm text-ink-2">Scanning with Gemini…</p>
-        <p className="text-xs text-ink-3">Large receipts can take up to 45 seconds</p>
-      </div>
-    )
-  }
-
-  if (state.step === 'capture') {
-    return (
-      <div className="flex h-full flex-col overflow-hidden bg-canvas">
-        <header className="flex items-center gap-3 border-b border-border bg-surface px-4 pb-3 pt-2">
-          <button onClick={() => navigate('/receipts')} className="text-nav text-accent">
-            Cancel
-          </button>
-          <h1 className="flex-1 text-nav font-semibold">New receipt</h1>
-        </header>
-
-        <div className="flex-1 space-y-4 overflow-y-auto p-4">
-          <ErrorBanner message={state.extractError} onDismiss={() => dispatch({ type: 'RETRY_EXTRACT' })} />
-          {state.extractError && <ScanDetails diagnostics={state.scanDiagnostics} />}
-
-          {!geminiKey.trim() && (
-            <div className="rounded-card border border-warn/40 bg-warn-bg p-4">
-              <p className="mb-2 text-sm font-medium text-warn-ink">Gemini API key required</p>
-              <p className="mb-3 text-xs text-ink-2">
-                Get a free key at <span className="font-medium">aistudio.google.com/app/apikey</span>
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="AIza..."
-                  value={state.geminiKeyInput}
-                  onChange={(e) => dispatch({ type: 'SET_GEMINI_KEY_INPUT', value: e.target.value })}
-                  className="flex-1 rounded-input border border-border px-3 py-2"
-                />
-                <button
-                  onClick={saveGeminiKey}
-                  disabled={!state.geminiKeyInput.trim()}
-                  className="rounded-input bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          )}
-
-          {state.imagePreview && (
-            <div className="relative">
-              <img src={state.imagePreview} alt="Receipt preview" className="max-h-48 w-full rounded-card object-contain" />
-              {state.imageFile && state.extractError && (
-                <button
-                  onClick={() => startExtract(state.imageFile!)}
-                  className="absolute inset-0 flex items-center justify-center gap-2 rounded-card bg-black/40 text-sm font-semibold text-white"
-                >
-                  <span>↺</span> Retry scan
-                </button>
-              )}
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-4">
-            <button
-              onClick={() => { fileInputRef.current!.accept = 'image/*'; fileInputRef.current!.capture = 'environment'; fileInputRef.current!.click() }}
-              className="flex flex-col items-center justify-center gap-2 rounded-card border-2 border-dashed border-accent/40 p-8 text-accent"
-            >
-              <span className="text-3xl">📷</span>
-              <span className="text-sm font-medium">Camera</span>
-            </button>
-            <button
-              onClick={() => { fileInputRef.current!.removeAttribute('capture'); fileInputRef.current!.accept = 'image/*'; fileInputRef.current!.click() }}
-              className="flex flex-col items-center justify-center gap-2 rounded-card border-2 border-dashed border-border-strong p-8 text-ink-2"
-            >
-              <span className="text-3xl">🖼️</span>
-              <span className="text-sm font-medium">Gallery</span>
-            </button>
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f) }}
-          />
-        </div>
-      </div>
-    )
-  }
-
   // ─── REVIEW ──────────────────────────────────────────────────────────────
   // Three fixed regions: nav bar, scrolling body, footer. Only the body
   // scrolls, and only vertically.
@@ -400,13 +446,9 @@ export default function NewReceiptPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden bg-canvas">
       <div className="flex flex-none items-center justify-between border-b border-border bg-surface px-4 pb-3 pt-2">
-        <button onClick={() => navigate('/receipts')} className="text-nav text-accent">
-          Cancel
-        </button>
+        <button onClick={cancel} className="text-nav text-accent">Cancel</button>
         <span className="text-nav font-semibold">Review</span>
-        <button onClick={() => handleSave(false)} className="text-nav font-semibold text-accent">
-          Save
-        </button>
+        <button onClick={() => handleSave(false)} className="text-nav font-semibold text-accent">Save</button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-5 pt-3.5">
@@ -424,12 +466,8 @@ export default function NewReceiptPage() {
 
         {/* Summary: the photo, what it is, and whether the numbers close. */}
         <div className="flex items-center gap-3.5 rounded-card bg-surface px-4 py-3.5">
-          {state.imagePreview ? (
-            <img
-              src={state.imagePreview}
-              alt="Receipt"
-              className="h-[68px] w-[52px] flex-none rounded-lg border border-hairline object-cover"
-            />
+          {scan.preview ? (
+            <img src={scan.preview} alt="Receipt" className="h-[68px] w-[52px] flex-none rounded-lg border border-hairline object-cover" />
           ) : (
             <div className="h-[68px] w-[52px] flex-none rounded-lg border border-hairline bg-canvas" />
           )}
@@ -468,17 +506,15 @@ export default function NewReceiptPage() {
             onChange={(id, name) => dispatch({ type: 'SET_STORE', storeId: id, storeName: name })}
             onCreateStore={async (name) => createStore(name, '#1D7A47')}
           />
-          <div className="mt-3 flex gap-2.5">
-            <div className="flex-1">
-              <label className="mb-1.5 block text-label text-ink-2" htmlFor="receipt-date">Date</label>
-              <input
-                id="receipt-date"
-                type="date"
-                value={state.receiptDate}
-                onChange={(e) => dispatch({ type: 'SET_DATE', date: e.target.value })}
-                className="w-full rounded-input border border-border px-3 py-3 text-field"
-              />
-            </div>
+          <div className="mt-3">
+            <label className="mb-1.5 block text-label text-ink-2" htmlFor="receipt-date">Date</label>
+            <input
+              id="receipt-date"
+              type="date"
+              value={state.receiptDate}
+              onChange={(e) => dispatch({ type: 'SET_DATE', date: e.target.value })}
+              className="w-full rounded-input border border-border px-3 py-3 text-field"
+            />
           </div>
           <div className="mt-3 flex gap-2.5">
             <div className="flex-1">
