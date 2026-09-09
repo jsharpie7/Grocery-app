@@ -1,8 +1,6 @@
 interface PageShellProps {
   title: string
   children: React.ReactNode
-  /** Rendered on the title's baseline, right-aligned. */
-  action?: React.ReactNode
 }
 
 /**
@@ -16,14 +14,11 @@ interface PageShellProps {
  * pads its whole body, while Receipts runs its month cards to their own
  * margins under unpadded month headers. Each screen pads itself.
  */
-export default function PageShell({ title, children, action }: PageShellProps) {
+export default function PageShell({ title, children }: PageShellProps) {
   return (
     <div className="flex h-full flex-col overflow-hidden bg-canvas">
       <main className="flex-1 overflow-y-auto">
-        <div className="flex items-baseline justify-between px-4 pb-3.5 pt-1.5">
-          <h1 className="text-title-lg">{title}</h1>
-          {action}
-        </div>
+        <h1 className="px-4 pb-3.5 pt-1.5 text-title-lg">{title}</h1>
         {children}
         {/* Clearance for the fixed tab bar the content scrolls beneath. */}
         <div aria-hidden style={{ height: 'var(--tab-bar-h)' }} />

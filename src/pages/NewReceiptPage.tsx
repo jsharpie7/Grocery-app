@@ -271,9 +271,11 @@ export default function NewReceiptPage() {
   }
 
   function cancel() {
-    // A running scan is deliberately left alone: the scanning screen promises
-    // it keeps going, and Cancel here means "put this away", not "abort".
-    if (state.step === 'review') useScanStore.getState().reset()
+    // A *running* scan is deliberately left alone: the scanning screen promises
+    // it keeps going, and Cancel means "put this away", not "abort". Anything
+    // already finished or failed is cleared, or its photo and error would
+    // still be sitting there the next time this screen opened.
+    if (useScanStore.getState().status !== 'running') useScanStore.getState().reset()
     navigate('/receipts')
   }
 

@@ -85,3 +85,28 @@ describe('scanStore', () => {
     expect(useScanStore.getState().file).not.toBeNull()
   })
 })
+
+describe('scanStore reset', () => {
+  beforeEach(() => {
+    extract.mockReset()
+    vi.stubGlobal('URL', { ...URL, createObjectURL: () => 'blob:x', revokeObjectURL: () => {} })
+    useScanStore.getState().reset()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('clears a failed scan so the next capture starts empty', async () => {
+    // Cancelling after a failure must not leave the old photo and error
+    // sitting on the capture screen the next time it opens.
+    extract.mockRejectedValue(new Error('nope'))
+    useScanStore.getState().start(file('a.png'), 'key', 'model')
+    await flush()
+    expect(useScanStore.getState().status).toBe('error')
+
+    useScanStore.getState().reset()
+    const s = useScanStore.getState()
+    expect(s.status).toBe('idle')
+    expect(s.file).toBeNull()
+    expect(s.preview).toBeNull()
+    expect(s.error).toBeNull()
+  })
+})

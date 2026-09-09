@@ -58,7 +58,8 @@ export default function DashboardPage() {
   const { currentTotal, typicalMonth } = computeMtdComparison(monthlyData, now)
 
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
-  const monthStart = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).replace(/\d+$/, '1')
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+    .toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 
   // Pace against the typical month, as a whole percentage either side of it.
   const pace = typicalMonth != null && typicalMonth > 0
