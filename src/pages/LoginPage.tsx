@@ -54,20 +54,20 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-full flex-col items-center justify-center overflow-y-auto bg-gray-50 p-4">
+    <div className="flex min-h-full flex-col items-center justify-center overflow-y-auto bg-canvas p-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="text-4xl mb-3">🧾</div>
-          <h1 className="text-2xl font-bold text-gray-900">Grocery Spend</h1>
-          <p className="text-gray-500 text-sm mt-1">Track your household grocery spending</p>
+          <h1 className="text-2xl font-bold text-ink">Grocery Spend</h1>
+          <p className="text-ink-2 text-sm mt-1">Track your household grocery spending</p>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-          <div className="flex rounded-lg bg-gray-100 p-1 mb-5">
+        <div className="bg-surface rounded-card shadow-sm border border-border p-6">
+          <div className="flex rounded-input bg-track p-1 mb-5">
             <button
               onClick={() => { setTab('signin'); setError(null) }}
               className={`flex-1 rounded-md py-2 text-sm font-medium transition-colors ${
-                tab === 'signin' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
+                tab === 'signin' ? 'bg-surface text-ink shadow-sm' : 'text-ink-2'
               }`}
             >
               Sign In
@@ -75,7 +75,7 @@ export default function LoginPage() {
             <button
               onClick={() => { setTab('signup'); setError(null) }}
               className={`flex-1 rounded-md py-2 text-sm font-medium transition-colors ${
-                tab === 'signup' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
+                tab === 'signup' ? 'bg-surface text-ink shadow-sm' : 'text-ink-2'
               }`}
             >
               Sign Up
@@ -85,31 +85,31 @@ export default function LoginPage() {
           <ErrorBanner message={error} onDismiss={() => setError(null)} />
 
           {success && (
-            <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">
+            <div className="mb-4 rounded-input bg-accent/5 border border-accent/25 px-4 py-3 text-sm text-accent">
               {success}
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <label className="block text-sm font-medium text-ink mb-1">Email</label>
               <input
                 type="email"
                 required
                 autoComplete="email"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded-input border border-border px-3 py-2.5 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+              <label className="block text-sm font-medium text-ink mb-1">Password</label>
               <input
                 type="password"
                 required
                 autoComplete={tab === 'signup' ? 'new-password' : 'current-password'}
                 minLength={6}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded-input border border-border px-3 py-2.5 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
@@ -117,7 +117,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60 flex items-center justify-center gap-2"
+              className="w-full rounded-input bg-accent py-2.5 text-sm font-semibold text-white hover:bg-accent-pressed disabled:opacity-60 flex items-center justify-center gap-2"
             >
               {loading && <Spinner size="sm" />}
               {tab === 'signup' ? 'Create Account' : 'Sign In'}
@@ -125,8 +125,8 @@ export default function LoginPage() {
           </form>
 
           {tab === 'signin' && error?.includes('already exists') && (
-            <p className="mt-3 text-center text-sm text-gray-500">
-              <button onClick={() => setTab('signin')} className="text-indigo-600 underline">
+            <p className="mt-3 text-center text-sm text-ink-2">
+              <button onClick={() => setTab('signin')} className="text-accent underline">
                 Sign in instead?
               </button>
             </p>

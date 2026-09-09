@@ -24,20 +24,20 @@ export default function SetupPage() {
   }
 
   return (
-    <div className="flex min-h-full flex-col items-center justify-center overflow-y-auto bg-gray-50 p-4">
+    <div className="flex min-h-full flex-col items-center justify-center overflow-y-auto bg-canvas p-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="text-4xl mb-3">🏠</div>
-          <h1 className="text-2xl font-bold text-gray-900">Set Up Your Household</h1>
-          <p className="text-gray-500 text-sm mt-1">Create or join a household to start tracking</p>
+          <h1 className="text-2xl font-bold text-ink">Set Up Your Household</h1>
+          <p className="text-ink-2 text-sm mt-1">Create or join a household to start tracking</p>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-          <div className="flex rounded-lg bg-gray-100 p-1 mb-5">
+        <div className="bg-surface rounded-card shadow-sm border border-border p-6">
+          <div className="flex rounded-input bg-track p-1 mb-5">
             <button
               onClick={() => setTab('create')}
               className={`flex-1 rounded-md py-2 text-sm font-medium transition-colors ${
-                tab === 'create' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
+                tab === 'create' ? 'bg-surface text-ink shadow-sm' : 'text-ink-2'
               }`}
             >
               Create New
@@ -45,7 +45,7 @@ export default function SetupPage() {
             <button
               onClick={() => setTab('join')}
               className={`flex-1 rounded-md py-2 text-sm font-medium transition-colors ${
-                tab === 'join' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'
+                tab === 'join' ? 'bg-surface text-ink shadow-sm' : 'text-ink-2'
               }`}
             >
               Join Existing
@@ -57,11 +57,11 @@ export default function SetupPage() {
           {tab === 'create' ? (
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Household Name</label>
+                <label className="block text-sm font-medium text-ink mb-1">Household Name</label>
                 <input
                   type="text"
                   placeholder="My Household"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-input border border-border px-3 py-2.5 text-sm focus:border-accent focus:outline-none"
                   value={householdName}
                   onChange={(e) => setHouseholdName(e.target.value)}
                 />
@@ -69,7 +69,7 @@ export default function SetupPage() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60 flex items-center justify-center gap-2"
+                className="w-full rounded-input bg-accent py-2.5 text-sm font-semibold text-white hover:bg-accent-pressed disabled:opacity-60 flex items-center justify-center gap-2"
               >
                 {loading && <Spinner size="sm" />}
                 Create Household
@@ -78,12 +78,12 @@ export default function SetupPage() {
           ) : (
             <form onSubmit={handleJoin} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Invite Code</label>
+                <label className="block text-sm font-medium text-ink mb-1">Invite Code</label>
                 <input
                   type="text"
                   required
                   placeholder="ABC123"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm uppercase tracking-widest focus:border-indigo-500 focus:outline-none"
+                  className="w-full rounded-input border border-border px-3 py-2.5 text-sm uppercase tracking-widest focus:border-accent focus:outline-none"
                   value={inviteCode}
                   onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
                   maxLength={8}
@@ -92,7 +92,7 @@ export default function SetupPage() {
               <button
                 type="submit"
                 disabled={loading || !inviteCode.trim()}
-                className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60 flex items-center justify-center gap-2"
+                className="w-full rounded-input bg-accent py-2.5 text-sm font-semibold text-white hover:bg-accent-pressed disabled:opacity-60 flex items-center justify-center gap-2"
               >
                 {loading && <Spinner size="sm" />}
                 Join Household
@@ -101,7 +101,7 @@ export default function SetupPage() {
           )}
         </div>
 
-        <button onClick={signOut} className="mt-4 w-full text-center text-sm text-gray-400 hover:text-gray-600">
+        <button onClick={signOut} className="mt-4 w-full text-center text-sm text-ink-3 hover:text-ink-2">
           Sign out
         </button>
       </div>
