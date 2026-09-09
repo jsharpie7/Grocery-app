@@ -41,7 +41,6 @@ interface State {
   items: ReviewItem[]
   /** Index of the one open row. The design allows exactly one at a time. */
   expanded: number | null
-  geminiKeyInput: string
 }
 
 type Action =
@@ -57,8 +56,6 @@ type Action =
   | { type: 'ADD_ITEM'; category: string }
   | { type: 'SAVE_START' }
   | { type: 'SAVE_ERROR'; error: string; isDuplicate?: boolean }
-  | { type: 'SET_GEMINI_KEY_INPUT'; value: string }
-  | { type: 'GEMINI_KEY_SET' }
 
 function today() {
   return new Date().toISOString().split('T')[0]
@@ -75,7 +72,6 @@ const initial: State = {
   taxAmount: '',
   items: [],
   expanded: null,
-  geminiKeyInput: '',
 }
 
 function reducer(state: State, action: Action): State {
@@ -125,10 +121,6 @@ function reducer(state: State, action: Action): State {
       return { ...state, step: 'saving', saveError: null, isDuplicate: false }
     case 'SAVE_ERROR':
       return { ...state, step: 'review', saveError: action.error, isDuplicate: !!action.isDuplicate }
-    case 'SET_GEMINI_KEY_INPUT':
-      return { ...state, geminiKeyInput: action.value }
-    case 'GEMINI_KEY_SET':
-      return { ...state, geminiKeyInput: '' }
     default:
       return state
   }
@@ -158,14 +150,17 @@ export default function NewReceiptPage() {
   const [state, dispatch] = useReducer(reducer, initial)
   const { createReceipt, resolveStoreId, resolveAliasesForReview } = useReceipts()
   const { createStore } = useStores()
-  const { geminiKey, geminiModel, setGeminiKey, categories, flagLowConfidence, stores } = useHouseholdStore()
+  const { geminiKey, geminiModel, categories, flagLowConfidence, stores } = useHouseholdStore()
   const scan = useScanStore()
 
   // ─── SCAN ────────────────────────────────────────────────────────────────
 
   function startScan(file: File) {
     const key = geminiKey.trim()
-    if (!key) return
+    // The capture screen sends the user to Settings rather than offering a
+    // photo picker without a key, so this should be unreachable — but a photo
+    // that silently does nothing is the worst possible failure here.
+    if (!key) { navigate('/settings'); return }
     scan.start(file, key, geminiModel)
   }
 
@@ -263,12 +258,6 @@ export default function NewReceiptPage() {
     }
   }
 
-  function saveGeminiKey() {
-    const key = state.geminiKeyInput.trim()
-    setGeminiKey(key)
-    dispatch({ type: 'GEMINI_KEY_SET' })
-    if (scan.file && key) scan.start(scan.file, key, geminiModel)
-  }
 
   function cancel() {
     // A *running* scan is deliberately left alone: the scanning screen promises
@@ -330,53 +319,28 @@ export default function NewReceiptPage() {
           ) : (
             <div className="absolute inset-x-8 top-1/2 -translate-y-1/2 text-center">
               <Images size={40} strokeWidth={1.25} aria-hidden className="mx-auto text-white/40" />
-              <p className="mt-4 text-[17px] font-semibold">Pick your receipt photo</p>
+              <p className="mt-4 text-[17px] font-semibold">
+                {needsKey ? 'One-time setup' : 'Pick your receipt photo'}
+              </p>
               <p className="mt-2 text-[14px] leading-normal text-white/60">
-                Works best when the receipt fills the frame and the text is in focus.
+                {needsKey
+                  ? 'Reading receipts uses Google Gemini, so the app needs your key before it can scan.'
+                  : 'Works best when the receipt fills the frame and the text is in focus.'}
               </p>
             </div>
           )}
 
-          {blocked && (
-            <div className="absolute inset-x-3 bottom-3 max-h-[60%] overflow-y-auto rounded-card bg-surface p-4 text-ink">
-              {scan.error && (
-                <>
-                  <ErrorBanner message={scan.error} onDismiss={() => scan.reset()} />
-                  <ScanDetails diagnostics={scan.diagnostics} />
-                  {scan.file && !needsKey && (
-                    <button
-                      onClick={() => startScan(scan.file!)}
-                      className="mt-3 w-full rounded-button bg-accent py-3 text-nav font-semibold text-white"
-                    >
-                      Retry scan
-                    </button>
-                  )}
-                </>
-              )}
-
-              {needsKey && (
-                <div className={scan.error ? 'mt-4' : ''}>
-                  <p className="mb-1 text-section">Gemini API key required</p>
-                  <p className="mb-3 text-meta text-ink-2">
-                    Get a free key at <span className="font-medium">aistudio.google.com/app/apikey</span>
-                  </p>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="AIza..."
-                      value={state.geminiKeyInput}
-                      onChange={(e) => dispatch({ type: 'SET_GEMINI_KEY_INPUT', value: e.target.value })}
-                      className="min-w-0 flex-1 rounded-input border border-border px-3 py-2.5 text-field"
-                    />
-                    <button
-                      onClick={saveGeminiKey}
-                      disabled={!state.geminiKeyInput.trim()}
-                      className="flex-none rounded-input bg-accent px-4 text-nav font-semibold text-white disabled:opacity-50"
-                    >
-                      Save
-                    </button>
-                  </div>
-                </div>
+          {scan.error && (
+            <div className="absolute inset-x-3 bottom-3 max-h-[55%] overflow-y-auto rounded-card bg-surface p-4 text-ink">
+              <ErrorBanner message={scan.error} onDismiss={() => scan.reset()} />
+              <ScanDetails diagnostics={scan.diagnostics} />
+              {scan.file && (
+                <button
+                  onClick={() => startScan(scan.file!)}
+                  className="mt-3 w-full rounded-button bg-accent py-3 text-nav font-semibold text-white"
+                >
+                  Retry scan
+                </button>
               )}
             </div>
           )}
@@ -387,6 +351,20 @@ export default function NewReceiptPage() {
               photographed in the phone's own camera app and picked up here.
               Taking one now stays available, one tap away. */}
           <div className="absolute inset-x-4 bottom-[56px]">
+            {needsKey ? (
+              <>
+                <button
+                  onClick={() => navigate('/settings')}
+                  className="w-full rounded-button bg-accent py-4 text-nav font-semibold text-white active:bg-accent-pressed"
+                >
+                  Add your scanning key
+                </button>
+                <p className="mt-3 text-center text-[14px] leading-normal text-white/60">
+                  Scanning needs a Gemini key. It lives in Settings → Scanning.
+                </p>
+              </>
+            ) : (
+            <>
             <button
               onClick={() => {
                 fileInputRef.current!.removeAttribute('capture')
@@ -407,6 +385,8 @@ export default function NewReceiptPage() {
               <Camera size={18} strokeWidth={1.5} aria-hidden />
               Take a photo instead
             </button>
+            </>
+            )}
           </div>
         </div>
 
