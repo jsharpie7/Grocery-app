@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { compareStores, priceTrend } from '../lib/itemTrends'
+import { priceTrend } from '../lib/itemTrends'
 
 describe('priceTrend', () => {
   it('reports a rise from the oldest price to the newest', () => {
@@ -38,56 +38,3 @@ describe('priceTrend', () => {
   })
 })
 
-describe('compareStores', () => {
-  it('finds the cheapest and dearest store and the saving between them', () => {
-    const c = compareStores([
-      { storeName: 'Publix', unitPrice: 4.29 },
-      { storeName: 'Aldi', unitPrice: 3.49 },
-    ])
-    expect(c).toEqual({
-      cheapestStore: 'Aldi',
-      cheapestPrice: 3.49,
-      dearestStore: 'Publix',
-      dearestPrice: 4.29,
-      savingPercent: 19,
-    })
-  })
-
-  it('uses each store best price, not its most recent', () => {
-    const c = compareStores([
-      { storeName: 'Publix', unitPrice: 4.29 },
-      { storeName: 'Aldi', unitPrice: 3.99 },
-      { storeName: 'Aldi', unitPrice: 3.49 },
-    ])
-    expect(c?.cheapestPrice).toBe(3.49)
-  })
-
-  it('declines to compare a single store', () => {
-    expect(compareStores([{ storeName: 'Publix', unitPrice: 4.29 }])).toBeNull()
-  })
-
-  it('declines when every store charges the same', () => {
-    expect(compareStores([
-      { storeName: 'Publix', unitPrice: 4.29 },
-      { storeName: 'Aldi', unitPrice: 4.29 },
-    ])).toBeNull()
-  })
-
-  it('ignores unusable prices', () => {
-    expect(compareStores([
-      { storeName: 'Publix', unitPrice: 4.29 },
-      { storeName: 'Aldi', unitPrice: 0 },
-    ])).toBeNull()
-  })
-
-  it('picks the extremes across more than two stores', () => {
-    const c = compareStores([
-      { storeName: 'Publix', unitPrice: 9.47 },
-      { storeName: 'Walmart', unitPrice: 8.2 },
-      { storeName: 'Costco', unitPrice: 6.98 },
-    ])
-    expect(c?.cheapestStore).toBe('Costco')
-    expect(c?.dearestStore).toBe('Publix')
-    expect(c?.savingPercent).toBe(26)
-  })
-})

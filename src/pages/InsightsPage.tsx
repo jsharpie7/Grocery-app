@@ -5,13 +5,21 @@ import PageShell from '../components/layout/PageShell'
 import ErrorBanner from '../components/ui/ErrorBanner'
 import Spinner from '../components/ui/Spinner'
 
-type Sort = 'spend' | 'price' | 'store'
+type Sort = 'spend' | 'price'
 
 const SORTS: [Sort, string][] = [
   ['spend', 'Most spent'],
   ['price', 'Price up'],
-  ['store', 'By store'],
 ]
+
+/**
+ * How far back the item figures look.
+ *
+ * One constant for the query and the per-month division, so the headline
+ * figure can never be an average over a different window than it was
+ * measured across.
+ */
+const MONTHS = 12
 
 const money = (n: number) => `$${n.toFixed(2)}`
 
@@ -45,25 +53,18 @@ function ItemRow({ name, figure, meta, trend, tone }: {
 
 export default function InsightsPage() {
   const [sort, setSort] = useState<Sort>('spend')
-  const {
-    topItems, storePriceGaps, error, loading,
-    fetchTopItems, fetchStorePriceGaps,
-  } = useInsights()
+  const { topItems, error, loading, fetchTopItems } = useInsights()
 
-  useEffect(() => {
-    fetchTopItems(25)
-    fetchStorePriceGaps(12)
-  }, [])
+  useEffect(() => { fetchTopItems(25, MONTHS) }, [])
 
-  // "Price up" reorders the same items by how much their price moved, so both
+  // "Price up" reorders the same items by how far the price moved, so both
   // segments read from one fetch rather than two.
   const priced = topItems
     .map((t) => ({ item: t, trend: priceTrend(t.recentPrices) }))
     .filter((r) => r.trend.oldest != null && r.trend.latest != null && r.trend.direction !== 'flat')
     .sort((a, b) => b.trend.percent - a.trend.percent)
 
-  const rows = sort === 'store' ? storePriceGaps : sort === 'price' ? priced : topItems
-  const isEmpty = !loading && rows.length === 0
+  const isEmpty = !loading && (sort === 'price' ? priced.length : topItems.length) === 0
 
   return (
     <PageShell title="Items">
@@ -89,11 +90,9 @@ export default function InsightsPage() {
           <div className="flex justify-center py-12"><Spinner size="lg" /></div>
         ) : isEmpty ? (
           <p className="px-1 py-12 text-center text-meta text-ink-2">
-            {sort === 'store'
-              ? 'Nothing to compare yet — buy the same item at two different stores and its cheapest shop shows up here.'
-              : sort === 'price'
-                ? 'No price movement yet. Prices show up here once an item has been bought more than once.'
-                : 'No item spend yet. Scan a receipt to start tracking.'}
+            {sort === 'price'
+              ? 'No price movement yet. Prices show up here once an item has been bought more than once.'
+              : 'No item spend yet. Scan a receipt to start tracking.'}
           </p>
         ) : (
           <div className="overflow-hidden rounded-card">
@@ -103,8 +102,12 @@ export default function InsightsPage() {
                 <ItemRow
                   key={t.groupKey}
                   name={t.displayName}
-                  figure={money(t.totalSpend)}
-                  meta={`${t.category} · ${t.purchaseCount} buy${t.purchaseCount === 1 ? '' : 's'} · avg ${money(t.totalSpend / t.purchaseCount)}`}
+                  // A per-month figure is what a grocery budget is kept in.
+                  // The 12-month total is the raw number but not a spendable
+                  // one; it moves to the metadata line where it still explains
+                  // where the monthly figure came from.
+                  figure={`${money(t.totalSpend / MONTHS)}/mo`}
+                  meta={`${t.category} · ${t.purchaseCount} buy${t.purchaseCount === 1 ? '' : 's'} · ${money(t.totalSpend)} in ${MONTHS} mo`}
                   trend={trend.direction === 'flat' ? 'flat' : `${trend.direction === 'up' ? '↑' : '↓'} ${Math.abs(trend.percent)}%`}
                   tone={trend.direction}
                 />
@@ -115,21 +118,10 @@ export default function InsightsPage() {
               <ItemRow
                 key={item.groupKey}
                 name={item.displayName}
-                figure={money(item.totalSpend)}
+                figure={`${money(item.totalSpend / MONTHS)}/mo`}
                 meta={`${item.category} · was ${money(trend.oldest!)}, now ${money(trend.latest!)}`}
                 trend={`${trend.direction === 'up' ? '↑' : '↓'} ${Math.abs(trend.percent)}%`}
                 tone={trend.direction}
-              />
-            ))}
-
-            {sort === 'store' && storePriceGaps.map((g) => (
-              <ItemRow
-                key={g.itemId}
-                name={g.displayName}
-                figure={money(g.cheapestPrice)}
-                meta={`Cheapest at ${g.cheapestStore} · ${money(g.dearestPrice)} at ${g.dearestStore}`}
-                trend={`save ${g.savingPercent}%`}
-                tone="down"
               />
             ))}
           </div>

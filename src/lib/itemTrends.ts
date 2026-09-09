@@ -1,9 +1,9 @@
 /**
  * Derived figures for the Items tab.
  *
- * The three segments reorder the same items *and* change what the two
- * right-hand values mean, so each one's numbers are computed here rather than
- * in the markup: the row renders whatever it is handed.
+ * Both segments reorder the same items *and* change what the two right-hand
+ * values mean, so each one's numbers are computed here rather than in the
+ * markup: the row renders whatever it is handed.
  */
 
 export interface PriceTrend {
@@ -40,43 +40,3 @@ export function priceTrend(recentPrices: number[]): PriceTrend {
   }
 }
 
-export interface StorePrice {
-  storeName: string
-  unitPrice: number
-}
-
-export interface StoreComparison {
-  cheapestStore: string
-  cheapestPrice: number
-  dearestStore: string
-  dearestPrice: number
-  /** Whole percent saved by buying at the cheapest rather than the dearest. */
-  savingPercent: number
-}
-
-/**
- * Cheapest and dearest store for one item.
- *
- * Null unless the item has been seen at two or more stores at different
- * prices — with one store there is no comparison to draw, and with identical
- * prices there is no saving to claim.
- */
-export function compareStores(prices: StorePrice[]): StoreComparison | null {
-  const byStore = new Map<string, number>()
-  for (const { storeName, unitPrice } of prices) {
-    if (!Number.isFinite(unitPrice) || unitPrice <= 0) continue
-    const seen = byStore.get(storeName)
-    // The best price a store has offered is the one worth comparing.
-    if (seen == null || unitPrice < seen) byStore.set(storeName, unitPrice)
-  }
-  if (byStore.size < 2) return null
-
-  const sorted = Array.from(byStore.entries()).sort((a, b) => a[1] - b[1])
-  const [cheapestStore, cheapestPrice] = sorted[0]
-  const [dearestStore, dearestPrice] = sorted[sorted.length - 1]
-
-  const savingPercent = Math.round(((dearestPrice - cheapestPrice) / dearestPrice) * 100)
-  if (savingPercent <= 0) return null
-
-  return { cheapestStore, cheapestPrice, dearestStore, dearestPrice, savingPercent }
-}

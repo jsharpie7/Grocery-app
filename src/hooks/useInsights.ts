@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useHouseholdStore } from '../store/householdStore'
-import { compareStores, type StoreComparison } from '../lib/itemTrends'
 import type { MonthlySpend, StoreMonthlySpend } from '../lib/supabase'
 
 export interface TopItem {
@@ -15,13 +14,6 @@ export interface TopItem {
   purchaseCount: number
   /** Most recent unit prices, newest first, for the price-history strip. */
   recentPrices: number[]
-}
-
-/** One item priced at two or more stores. Drives the "By store" segment. */
-export interface StorePriceGap extends StoreComparison {
-  itemId: string
-  displayName: string
-  category: string
 }
 
 export interface CategoryBreakdown {
@@ -73,7 +65,6 @@ export function useInsights() {
   const [storeMonthlyData, setStoreMonthlyData] = useState<StoreMonthlySpend[]>([])
   const [topItems, setTopItems] = useState<TopItem[]>([])
   const [categoryData, setCategoryData] = useState<CategoryBreakdown[]>([])
-  const [storePriceGaps, setStorePriceGaps] = useState<StorePriceGap[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const householdId = useHouseholdStore((s) => s.householdId)
@@ -134,62 +125,6 @@ export function useInsights() {
     })))
   }
 
-  /**
-   * Where each item is cheapest, for items bought at more than one store.
-   *
-   * Two queries rather than one filtered join: the household's items first,
-   * then their prices by id. That is the shape `fetchCategoryBreakdown` already
-   * uses, and it avoids depending on PostgREST's embedded-resource filtering.
-   *
-   * The comparison itself is `compareStores`, which is pure and tested — this
-   * function only gathers the rows.
-   */
-  async function fetchStorePriceGaps(months = 12) {
-    if (!householdId) return
-    setError(null)
-    try {
-      const cutoff = new Date()
-      cutoff.setMonth(cutoff.getMonth() - months)
-
-      const { data: items, error: iErr } = await supabase
-        .from('items')
-        .select('id, name, category')
-        .eq('household_id', householdId)
-      if (iErr) { setError(iErr.message); return }
-      if (!items?.length) { setStorePriceGaps([]); return }
-
-      const { data: prices, error: pErr } = await supabase
-        .from('item_prices')
-        .select('item_id, unit_price, store:stores(name)')
-        .in('item_id', items.map((i) => i.id))
-        .gte('purchased_at', cutoff.toISOString().split('T')[0])
-      if (pErr) { setError(pErr.message); return }
-
-      type PriceRow = { item_id: string; unit_price: number | string; store: { name: string } | null }
-      const byItem = new Map<string, { storeName: string; unitPrice: number }[]>()
-      for (const row of (prices as unknown as PriceRow[]) ?? []) {
-        // A price with no store cannot take part in a store comparison.
-        if (!row.store?.name) continue
-        const list = byItem.get(row.item_id) ?? []
-        list.push({ storeName: row.store.name, unitPrice: Number(row.unit_price) })
-        byItem.set(row.item_id, list)
-      }
-
-      const gaps: StorePriceGap[] = []
-      for (const item of items) {
-        const comparison = compareStores(byItem.get(item.id) ?? [])
-        if (comparison) {
-          gaps.push({ ...comparison, itemId: item.id, displayName: item.name, category: item.category })
-        }
-      }
-
-      // Biggest saving first: the point of the segment is where to shop.
-      setStorePriceGaps(gaps.sort((a, b) => b.savingPercent - a.savingPercent))
-    } catch (e) {
-      setError((e as Error).message)
-    }
-  }
-
   async function fetchCategoryBreakdown(months = 12) {
     if (!householdId) return
     setError(null)
@@ -230,9 +165,8 @@ export function useInsights() {
   }
 
   return {
-    monthlyData, storeMonthlyData, topItems, categoryData, storePriceGaps,
+    monthlyData, storeMonthlyData, topItems, categoryData,
     error, loading,
     fetchMonthlySpend, fetchStoreMonthlySpend, fetchTopItems, fetchCategoryBreakdown,
-    fetchStorePriceGaps,
   }
 }
