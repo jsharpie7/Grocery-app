@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useInsights } from '../hooks/useInsights'
-import { priceTrend } from '../lib/itemTrends'
+import { MIN_MONTHS_FOR_RATE, monthsCovered, priceTrend } from '../lib/itemTrends'
 import PageShell from '../components/layout/PageShell'
 import ErrorBanner from '../components/ui/ErrorBanner'
 import Spinner from '../components/ui/Spinner'
@@ -12,13 +12,7 @@ const SORTS: [Sort, string][] = [
   ['price', 'Price up'],
 ]
 
-/**
- * How far back the item figures look.
- *
- * One constant for the query and the per-month division, so the headline
- * figure can never be an average over a different window than it was
- * measured across.
- */
+/** How far back the item figures look. */
 const MONTHS = 12
 
 const money = (n: number) => `$${n.toFixed(2)}`
@@ -53,9 +47,23 @@ function ItemRow({ name, figure, meta, trend, tone }: {
 
 export default function InsightsPage() {
   const [sort, setSort] = useState<Sort>('spend')
-  const { topItems, error, loading, fetchTopItems } = useInsights()
+  const { topItems, monthlyData, error, loading, fetchTopItems, fetchMonthlySpend } = useInsights()
 
-  useEffect(() => { fetchTopItems(25, MONTHS) }, [])
+  useEffect(() => {
+    fetchTopItems(25, MONTHS)
+    // Not for a chart — this is how the screen learns how long the household
+    // has actually been tracking, which is the divisor for every /mo figure.
+    fetchMonthlySpend(MONTHS)
+  }, [])
+
+  // `monthlyData` only contains months that have receipts, oldest first, so
+  // its first row is the start of the record.
+  const monthsTracked = monthlyData.length ? monthsCovered(monthlyData[0].month, new Date()) : 0
+  const showRate = monthsTracked >= MIN_MONTHS_FOR_RATE
+
+  /** The headline figure: a monthly rate once that means something, else the plain total. */
+  const figureFor = (totalSpend: number) =>
+    showRate ? `${money(totalSpend / monthsTracked)}/mo` : money(totalSpend)
 
   // "Price up" reorders the same items by how far the price moved, so both
   // segments read from one fetch rather than two.
@@ -95,19 +103,24 @@ export default function InsightsPage() {
               : 'No item spend yet. Scan a receipt to start tracking.'}
           </p>
         ) : (
-          <div className="overflow-hidden rounded-card">
+          <>
+            {!showRate && (
+              <p className="mb-2 px-1 text-label leading-normal text-ink-2">
+                Showing totals. A monthly average needs at least{' '}
+                {MIN_MONTHS_FOR_RATE} months of receipts.
+              </p>
+            )}
+            <div className="overflow-hidden rounded-card">
             {sort === 'spend' && topItems.map((t) => {
               const trend = priceTrend(t.recentPrices)
               return (
                 <ItemRow
                   key={t.groupKey}
                   name={t.displayName}
-                  // A per-month figure is what a grocery budget is kept in.
-                  // The 12-month total is the raw number but not a spendable
-                  // one; it moves to the metadata line where it still explains
-                  // where the monthly figure came from.
-                  figure={`${money(t.totalSpend / MONTHS)}/mo`}
-                  meta={`${t.category} · ${t.purchaseCount} buy${t.purchaseCount === 1 ? '' : 's'} · ${money(t.totalSpend)} in ${MONTHS} mo`}
+                  figure={figureFor(t.totalSpend)}
+                  meta={`${t.category} · ${t.purchaseCount} buy${t.purchaseCount === 1 ? '' : 's'}${
+                    showRate ? ` · ${money(t.totalSpend)} in ${monthsTracked} mo` : ' · total so far'
+                  }`}
                   trend={trend.direction === 'flat' ? 'flat' : `${trend.direction === 'up' ? '↑' : '↓'} ${Math.abs(trend.percent)}%`}
                   tone={trend.direction}
                 />
@@ -118,13 +131,14 @@ export default function InsightsPage() {
               <ItemRow
                 key={item.groupKey}
                 name={item.displayName}
-                figure={`${money(item.totalSpend / MONTHS)}/mo`}
+                figure={figureFor(item.totalSpend)}
                 meta={`${item.category} · was ${money(trend.oldest!)}, now ${money(trend.latest!)}`}
                 trend={`${trend.direction === 'up' ? '↑' : '↓'} ${Math.abs(trend.percent)}%`}
                 tone={trend.direction}
               />
             ))}
-          </div>
+            </div>
+          </>
         )}
       </div>
     </PageShell>

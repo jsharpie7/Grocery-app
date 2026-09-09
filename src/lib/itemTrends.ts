@@ -40,3 +40,34 @@ export function priceTrend(recentPrices: number[]): PriceTrend {
   }
 }
 
+/**
+ * How many calendar months of history the household actually has, inclusive.
+ *
+ * `earliestMonthKey` is a `YYYY-MM` key — the oldest month with a receipt.
+ * September to September is 1, June to September is 4.
+ *
+ * This is the honest denominator for a per-month figure. Dividing a year's
+ * worth of spend by 12 when only three months have been tracked reports a
+ * quarter of the real monthly cost, which is worse than showing nothing: the
+ * number looks precise and is wrong in the reassuring direction.
+ *
+ * Household span rather than per-item span is deliberate. A month in which you
+ * bought no chicken is still a real $0 chicken month, and should pull the
+ * average down; measuring from each item's own first purchase would report a
+ * once-bought item as if it were a monthly habit.
+ */
+export function monthsCovered(earliestMonthKey: string, today: Date): number {
+  const [year, month] = earliestMonthKey.split('-').map(Number)
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return 1
+
+  const span =
+    (today.getFullYear() - year) * 12 + (today.getMonth() + 1 - month) + 1
+
+  return Math.max(1, span)
+}
+
+/**
+ * Below this, a "per month" figure is being extrapolated from too little to
+ * mean anything, and the screen shows plain totals instead.
+ */
+export const MIN_MONTHS_FOR_RATE = 2
