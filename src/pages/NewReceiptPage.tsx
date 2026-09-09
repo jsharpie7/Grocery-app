@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Images } from 'lucide-react'
+import { Camera, Images } from 'lucide-react'
 import { REQUEST_TIMEOUT_MS, type ExtractedReceiptData } from '../lib/gemini'
 import { normalizeStoreName } from '../lib/itemMatcher'
 import { useReceipts } from '../hooks/useReceipts'
@@ -328,14 +328,13 @@ export default function NewReceiptPage() {
           {scan.preview ? (
             <img src={scan.preview} alt="Receipt" className="h-full w-full object-contain" />
           ) : (
-            <>
-              {/* Not a viewfinder: this is a PWA, so the shutter hands off to
-                  the system camera. The frame shows how to hold the receipt. */}
-              <div className="absolute inset-x-[46px] bottom-[150px] top-[70px] rounded-[10px] border-2 border-white/85" />
-              <p className="absolute inset-x-0 top-[34px] text-center text-[14px] font-medium text-white/75">
-                Fill the frame with the receipt
+            <div className="absolute inset-x-8 top-1/2 -translate-y-1/2 text-center">
+              <Images size={40} strokeWidth={1.25} aria-hidden className="mx-auto text-white/40" />
+              <p className="mt-4 text-[17px] font-semibold">Pick your receipt photo</p>
+              <p className="mt-2 text-[14px] leading-normal text-white/60">
+                Works best when the receipt fills the frame and the text is in focus.
               </p>
-            </>
+            </div>
           )}
 
           {blocked && (
@@ -382,32 +381,32 @@ export default function NewReceiptPage() {
             </div>
           )}
 
-          <div className="absolute inset-x-0 bottom-[56px] flex items-center justify-center gap-6.5">
+          {/* Choosing an existing photo is the primary action, not the
+              fallback. The design drew a camera shutter as the hero control,
+              but the app has no viewfinder to put behind it — receipts get
+              photographed in the phone's own camera app and picked up here.
+              Taking one now stays available, one tap away. */}
+          <div className="absolute inset-x-4 bottom-[56px]">
             <button
               onClick={() => {
                 fileInputRef.current!.removeAttribute('capture')
                 fileInputRef.current!.click()
               }}
-              aria-label="Choose from library"
-              className="flex h-[46px] w-[46px] items-center justify-center rounded-lg border border-white/25 bg-white/10 text-white/75"
+              className="flex w-full items-center justify-center gap-2 rounded-button bg-accent py-4 text-nav font-semibold text-white active:bg-accent-pressed"
             >
-              {/* The prototype stood this in with a striped square; a real
-                  glyph says "library" without needing the caption. */}
-              <Images size={20} strokeWidth={1.5} aria-hidden />
+              <Images size={20} strokeWidth={1.75} aria-hidden />
+              Choose photo
             </button>
             <button
               onClick={() => {
                 fileInputRef.current!.setAttribute('capture', 'environment')
                 fileInputRef.current!.click()
               }}
-              aria-label="Take a photo"
-              className="h-[74px] w-[74px] rounded-full bg-white shadow-[0_0_0_5px_rgba(255,255,255,0.25)]"
-            />
-            {/* The design's Flash control is omitted: a PWA hands capture to
-                the system camera and cannot drive the torch, and a button that
-                does nothing is worse than no button. Spacer keeps the shutter
-                centred. */}
-            <span className="h-[46px] w-[46px]" />
+              className="mt-3 flex w-full items-center justify-center gap-2 py-2 text-nav text-white/70"
+            >
+              <Camera size={18} strokeWidth={1.5} aria-hidden />
+              Take a photo instead
+            </button>
           </div>
         </div>
 
