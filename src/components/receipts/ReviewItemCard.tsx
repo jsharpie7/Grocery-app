@@ -1,3 +1,4 @@
+import { Tag } from 'lucide-react'
 import { useHouseholdStore } from '../../store/householdStore'
 import type { ReviewFlag } from '../../lib/reviewFlags'
 import type { ReviewItem } from '../../lib/reviewItems'
@@ -22,6 +23,44 @@ interface ReviewItemCardProps {
 function money(value: string): string {
   const n = Number(value.trim())
   return value.trim() && Number.isFinite(n) ? `$${n.toFixed(2)}` : '$0.00'
+}
+
+/**
+ * Whether this line is attached to an existing catalog entry, and which one.
+ *
+ * The distinction matters while reviewing: a new item is about to enter the
+ * catalog under whatever name is typed here, so this is the one moment to name
+ * it well. A matched item already has a name, and showing that name — not just
+ * a tick — is what makes a wrong match visible ("Apples" attached to "Honey"
+ * reads as an error only if "Honey" is on screen).
+ */
+function CatalogTag({ item }: { item: ReviewItem }) {
+  if (!item.matchedItemId) {
+    return (
+      <span className="inline-flex flex-none items-center rounded-[6px] bg-chip px-1.5 py-0.5 text-[11px] font-semibold uppercase leading-none tracking-[0.3px] text-ink-muted">
+        New
+      </span>
+    )
+  }
+
+  // Only worth naming once a rename has made the two differ; otherwise the
+  // catalog name is already the name on the row.
+  const renamed =
+    item.catalogName != null &&
+    item.catalogName.trim().toLowerCase() !== item.name.trim().toLowerCase()
+
+  return (
+    <span
+      className="inline-flex min-w-0 flex-none items-center gap-1 text-[11px] leading-none text-ink-3"
+      title={item.catalogName ? `In your catalog as “${item.catalogName}”` : 'In your catalog'}
+    >
+      <Tag size={11} strokeWidth={2} aria-hidden />
+      {renamed && <span className="truncate">{item.catalogName}</span>}
+      <span className="sr-only">
+        {item.catalogName ? `In your catalog as ${item.catalogName}` : 'In your catalog'}
+      </span>
+    </span>
+  )
 }
 
 const FLAG_LABEL: Record<Exclude<ReviewFlag, null>, string> = {
@@ -64,9 +103,9 @@ export default function ReviewItemCard({
     >
       {expanded ? (
         <div className="px-4 py-3.5">
-          <div className="mb-3 flex items-center justify-between">
-            <span className={`text-flag uppercase ${flag ? 'text-warn-ink' : 'text-ink-2'}`}>
-              {flag ? FLAG_LABEL[flag] : 'Editing'}
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <span className={`min-w-0 truncate text-flag uppercase ${flag ? 'text-warn-ink' : 'text-ink-2'}`}>
+              {flag ? FLAG_LABEL[flag] : item.matchedItemId ? 'Editing · in your catalog' : 'Editing · new item'}
             </span>
             <button onClick={onToggle} className="text-meta text-ink-2">
               Close
@@ -86,6 +125,11 @@ export default function ReviewItemCard({
               against the paper rather than against memory. */}
           <p className="mt-2 text-label leading-normal text-ink-2">
             {item.ocr ? `On receipt: “${item.ocr}”` : 'Added by hand'}
+          </p>
+          <p className="mt-1 text-label leading-normal text-ink-2">
+            {item.matchedItemId
+              ? <>In your catalog as “{item.catalogName}”</>
+              : 'New item — this name is what goes into your catalog.'}
           </p>
 
           {/* 1 : 1.4 : 1.4 is what lets three number fields share a 393px
@@ -166,7 +210,10 @@ export default function ReviewItemCard({
       ) : (
         <button onClick={onToggle} className="flex w-full items-center gap-3 px-4 py-3 text-left">
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-row">{item.name || 'Untitled item'}</span>
+            <span className="flex items-center gap-1.5">
+              <span className="min-w-0 truncate text-row">{item.name || 'Untitled item'}</span>
+              <CatalogTag item={item} />
+            </span>
             <span className="mt-[3px] block text-[12px] leading-tight text-ink-2">
               {item.cat || 'Uncategorized'} · {item.qty || '0'} @ {money(item.unitPrice)}
             </span>

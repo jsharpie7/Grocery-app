@@ -30,6 +30,16 @@ export interface ReviewItem {
   /** Carried through to the save untouched — not editable on this screen. */
   item_number: string | null
   matchedItemId: string | null
+  /**
+   * The catalog item this line matched, by name. Null for a line that will
+   * create a new catalog entry.
+   *
+   * Captured separately from `name` because the two diverge the moment the
+   * name is edited, and the useful thing to show afterwards is still which
+   * catalog entry the line is attached to — a rename cannot reveal a bad
+   * match, but the catalog name sitting beside it can.
+   */
+  catalogName: string | null
   measure: string
 }
 
@@ -53,6 +63,9 @@ export function toReviewItems(items: PendingLineItem[]): ReviewItem[] {
     flag: deriveFlag(it),
     item_number: it.item_number,
     matchedItemId: it.matchedItemId ?? null,
+    // resolveAliasesForReview replaces item_name with the catalog name when it
+    // matches, so on the way in the two are the same value.
+    catalogName: it.matchedItemId ? it.item_name : null,
     measure: it.unit,
   }))
 }
@@ -70,6 +83,7 @@ export function emptyReviewItem(defaultCategory: string): ReviewItem {
     flag: null,
     item_number: null,
     matchedItemId: null,
+    catalogName: null,
     measure: 'ea',
   }
 }
