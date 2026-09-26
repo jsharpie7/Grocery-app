@@ -16,10 +16,11 @@ import ReceiptDetailPage from './pages/ReceiptDetailPage'
 import InsightsPage from './pages/InsightsPage'
 import ItemDetailPage from './pages/ItemDetailPage'
 import SettingsPage from './pages/SettingsPage'
+import ShoppingListPage from './pages/ShoppingListPage'
 
 /** Screens that carry the tab bar and the FAB. Everything else is pushed or
  *  modal and owns its own chrome. */
-const TAB_ROOTS = ['/', '/receipts', '/insights', '/settings']
+const TAB_ROOTS = ['/', '/receipts', '/lists', '/insights', '/settings']
 
 function AppRoutes() {
   const { user, loading } = useAuthStore()
@@ -64,6 +65,7 @@ function AppRoutes() {
         <Route path="/receipts/new" element={<NewReceiptPage />} />
         <Route path="/receipts/:id" element={<ReceiptDetailPage />} />
         <Route path="/insights" element={<InsightsPage />} />
+        <Route path="/lists" element={<ShoppingListPage />} />
         <Route path="/items/:groupKey" element={<ItemDetailPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
