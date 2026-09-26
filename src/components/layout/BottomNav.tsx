@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { ChartColumn, Receipt, Tag, Settings, type LucideIcon } from 'lucide-react'
+import { ChartColumn, Receipt, Tag, Settings, ListChecks, type LucideIcon } from 'lucide-react'
 
 interface Tab {
   to: string
@@ -11,6 +11,7 @@ const tabs: Tab[] = [
   { to: '/', label: 'Spend', Icon: ChartColumn },
   { to: '/receipts', label: 'Receipts', Icon: Receipt },
   { to: '/insights', label: 'Items', Icon: Tag },
+  { to: '/lists', label: 'Lists', Icon: ListChecks },
   { to: '/settings', label: 'Settings', Icon: Settings },
 ]
 
